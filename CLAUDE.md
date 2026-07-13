@@ -77,7 +77,8 @@ Pulled from the design doc's §11 (Explicitly Deferred / Rejected) — these wer
 - TypeScript, strict mode.
 - Prefer plain functions and factory functions over classes where reasonable (matches the loader-factory and adapter patterns already established).
 - Module/folder naming should mirror the design doc's structure where practical — see §12's suggested repo layout as the starting scaffold, not a strict requirement.
-- Core libraries are chosen (§13 in the design doc) — Kysely, Zod, Telegraf, Pino. Build / lint / test *commands* are not yet set (no `package.json` scripts defined) — update this section once they exist; don't leave it stale.
+- Core libraries are chosen (§13 in the design doc) — Kysely, Zod, Telegraf, Pino.
+- **Build / typecheck:** `pnpm build` (`tsc`), `pnpm typecheck` (`tsc --noEmit`). No lint or unit-test runner yet (evals are the correctness signal per design doc §9.3).
 
 ---
 
