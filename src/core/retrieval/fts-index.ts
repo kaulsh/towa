@@ -42,7 +42,7 @@ export async function indexGistForFts(
     .execute();
 }
 
-async function deleteFtsBySource(
+export async function deleteFtsBySource(
   db: Kysely<Database>,
   sourceType: FtsSourceType,
   sourceId: string,

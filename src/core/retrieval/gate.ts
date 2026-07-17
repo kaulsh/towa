@@ -12,7 +12,8 @@ import type { GateResult } from "./types.js";
  */
 const GateOutputSchema = z.union([
   z.object({
-    insufficient: z.literal(false).optional(),
+    // Required + nullable: OpenAI structured-outputs reject bare `.optional()`.
+    insufficient: z.literal(false).nullable().default(null),
     answer: z.string().min(1),
   }),
   z.object({
@@ -21,9 +22,16 @@ const GateOutputSchema = z.union([
   }),
 ]);
 
+const AnswerOnlySchema = z.object({
+  answer: z.string().min(1),
+});
+
 /**
  * Run the generation call that doubles as the sufficiency gate.
  * Returns either an answer or follow-up queries for another retrieval round.
+ *
+ * When `forceAnswer` is set (hard-cap path), the model must produce an answer
+ * with the context on hand — no further retrieval loop.
  */
 export async function generateWithGate(
   chatModel: LoadedChatModel,
@@ -32,6 +40,8 @@ export async function generateWithGate(
     workingContext: readonly WorkingContextTurn[];
     retrievedBlocks: string;
     message: string;
+    /** Last round: answer with whatever context exists; no insufficient. */
+    forceAnswer?: boolean;
   },
 ): Promise<GateResult> {
   const workingBlock =
@@ -41,14 +51,6 @@ export async function generateWithGate(
           .map((t) => `${t.role}: ${t.content}`)
           .join("\n");
 
-  const system = `${input.systemPrompt}
-
-You have a working-context buffer (recent turns) and retrieved memory below.
-Answer the user using that context.
-If the retrieved memory is insufficient to answer accurately, set insufficient=true and provide follow_up_queries (search directions that would help) instead of guessing.
-Otherwise return { "answer": "..." } (you may include "insufficient": false).
-Never invent memories that are not supported by the context.`;
-
   const user = `## Working context
 ${workingBlock}
 
@@ -57,6 +59,47 @@ ${input.retrievedBlocks || "## Retrieved memory\n(none)"}
 ## Current message
 ${input.message}`;
 
+  if (input.forceAnswer) {
+    const system = `${input.systemPrompt}
+
+You have a working-context buffer (recent turns) and retrieved memory below.
+You must answer the user now — no further memory search is available.
+Greetings, chitchat, and questions answerable without long-term memory should get a normal reply.
+If a factual memory question cannot be grounded, say you don't recall that yet — do not invent memories.
+Return JSON: { "answer": "..." }.`;
+
+    const raw = await generateStructured(
+      chatModel,
+      [
+        { role: "system", content: system },
+        { role: "user", content: user },
+      ],
+      AnswerOnlySchema,
+      {
+        schemaDescription: 'Return JSON {"answer":"..."}.',
+      },
+    );
+    return { insufficient: false, answer: raw.answer };
+  }
+
+  const system = `${input.systemPrompt}
+
+You have a working-context buffer (recent turns) and retrieved memory below.
+Answer the user using that context.
+
+Mark insufficient=true ONLY when the user needs a specific fact from long-term memory that is missing from the context below, and a different memory search might find it.
+
+When insufficient=true, follow_up_queries must be MEMORY SEARCH queries (phrases to look up in past episodes / the knowledge graph) — never questions directed at the user, never clarifiers like "what would you like help with?".
+
+Do NOT mark insufficient for:
+- greetings, small talk, thanks, or other chitchat — just answer
+- questions answerable from working context alone
+- questions that need no personal memory (general knowledge / conversational replies)
+- wanting more detail from the user (answer what you can, or ask in the answer text instead)
+
+Never invent memories that are not supported by the context.
+Otherwise return { "answer": "..." } (you may include "insufficient": false).`;
+
   const messages: ChatMessage[] = [
     { role: "system", content: system },
     { role: "user", content: user },
@@ -64,7 +107,7 @@ ${input.message}`;
 
   const raw = await generateStructured(chatModel, messages, GateOutputSchema, {
     schemaDescription:
-      'Return JSON either {"answer":"..."} or {"insufficient":true,"follow_up_queries":["..."]}.',
+      'Return JSON either {"answer":"..."} or {"insufficient":true,"follow_up_queries":["memory search phrase",...]} — follow_up_queries are search strings, not questions to the user.',
   });
 
   if ("insufficient" in raw && raw.insufficient === true) {

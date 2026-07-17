@@ -1,4 +1,5 @@
 import type { Kysely } from "kysely";
+import type { Logger } from "pino";
 
 import type { Database } from "../../db/types.js";
 import type {
@@ -34,7 +35,10 @@ export interface RunRetrievalAndGenerateInput {
   budgetOptions?: ComputeTokenBudgetsOptions;
   /** Override gate round cap (default GATE_MAX_ROUNDS = 3). */
   maxGateRounds?: number;
+  /** Passed through to working-context session boundary (§6). */
+  sessionIdleThresholdSec?: number;
   nowSec?: number;
+  logger?: Logger;
 }
 
 export interface RunRetrievalAndGenerateResult {
@@ -62,6 +66,7 @@ export async function runRetrievalAndGenerate(
   const systemPrompt = input.systemPrompt ?? DEFAULT_SYSTEM_PROMPT;
   const maxRounds = input.maxGateRounds ?? GATE_MAX_ROUNDS;
   const nowSec = input.nowSec ?? Math.floor(Date.now() / 1000);
+  const log = input.logger;
 
   const budgets = await computeTokenBudgets(
     input.chatModel,
@@ -75,6 +80,7 @@ export async function runRetrievalAndGenerate(
     {
       budgetTokens: budgets.workingContext,
       nowSec,
+      sessionIdleThresholdSec: input.sessionIdleThresholdSec,
     },
   );
 
@@ -114,25 +120,38 @@ export async function runRetrievalAndGenerate(
     });
     lastRetrieved = retrieved;
 
+    const forceAnswer = round === maxRounds;
     const gate = await generateWithGate(input.chatModel, {
       systemPrompt,
       workingContext,
       retrievedBlocks: retrieved.formattedBlocks,
       message: input.message,
+      // Hard cap: must answer with context on hand — no diagnostic stub to the user.
+      forceAnswer,
     });
 
     if (!gate.insufficient) {
+      log?.info(
+        {
+          round,
+          forceAnswer,
+          answerLen: gate.answer.length,
+          answerPreview: gate.answer.slice(0, 80),
+        },
+        "gate answered",
+      );
       answer = gate.answer;
       break;
     }
 
+    log?.info(
+      {
+        round,
+        followUpQueries: gate.followUpQueries,
+      },
+      "gate insufficient — another retrieval round",
+    );
     followUpQueries = gate.followUpQueries;
-    if (round === maxRounds) {
-      // Hard cap reached — best-effort answer rather than leaving the user empty.
-      answer =
-        "(I could not find enough memory to answer confidently after " +
-        `${maxRounds} retrieval rounds. Follow-ups tried: ${followUpQueries.join("; ") || "none"})`;
-    }
   }
 
   return {

@@ -111,7 +111,11 @@ export async function loadLlamaCpp(
       if (input.schema === undefined) {
         return { text };
       }
-      return { text, structured: parseStructuredText(text, input.schema) };
+      try {
+        return { text, structured: parseStructuredText(text, input.schema) };
+      } catch {
+        return { text };
+      }
     },
     async countTokens(text: string): Promise<number> {
       return llamaModel.tokenize(text).length;

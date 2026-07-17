@@ -3,7 +3,17 @@
   "version": "0.1.0",
   "description": "AI agent harness designed for durable long-term memory recall. See docs/towa-design.md for system and workflow details.",
   "type": "module",
-  "main": "dist/index.js",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
   "scripts": {
     "build": "tsc",
     "typecheck": "tsc --noEmit",

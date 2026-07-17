@@ -2,6 +2,7 @@ import type { Kysely } from "kysely";
 
 import type { Database } from "../../db/types.js";
 import { embeddingToBlob } from "../kg/embeddings.js";
+import { indexGistForFts } from "../retrieval/fts-index.js";
 
 export interface WriteEpisodeGistInput {
   episodeId: number;
@@ -35,4 +36,6 @@ export async function writeEpisodeGist(
       }),
     )
     .execute();
+
+  await indexGistForFts(db, input.episodeId, input.gistText);
 }

@@ -3,6 +3,7 @@ import {
   type FeatureExtractionPipeline,
   type Tensor,
 } from "@huggingface/transformers";
+import pino, { type Logger } from "pino";
 import type { LoadedEmbeddingModel } from "../types.js";
 
 export interface LocalEmbeddingsConfig {
@@ -15,6 +16,8 @@ export interface LocalEmbeddingsConfig {
    * Embedding dimensionality. When omitted, inferred during load.
    */
   dimensions?: number;
+  /** Optional pino logger; defaults to `{ name: "local-embeddings" }`. */
+  logger?: Logger;
 }
 
 const DEFAULT_MODEL = "onnx-community/all-MiniLM-L6-v2-ONNX";
@@ -47,6 +50,12 @@ export async function loadLocalEmbeddings(
   config: LocalEmbeddingsConfig = {},
 ): Promise<LoadedEmbeddingModel> {
   const modelId = config.model ?? DEFAULT_MODEL;
+  const log = config.logger ?? pino({ name: "local-embeddings" });
+
+  log.info(
+    { model: modelId },
+    "loading local embedding model (first run may download ONNX weights)",
+  );
 
   const extractor = (await pipeline("feature-extraction", modelId, {
     device: "cpu",
@@ -63,6 +72,8 @@ export async function loadLocalEmbeddings(
     }
     dimensions = inferred;
   }
+
+  log.info({ model: modelId, dimensions }, "local embedding model loaded");
 
   return {
     id: modelId,

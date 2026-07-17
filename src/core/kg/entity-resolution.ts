@@ -1,7 +1,11 @@
 import type { Kysely } from "kysely";
 
 import type { Database } from "../../db/types.js";
-import type { ChatMessage, LoadedChatModel, LoadedEmbeddingModel } from "../../models/types.js";
+import type {
+  ChatMessage,
+  LoadedChatModel,
+  LoadedEmbeddingModel,
+} from "../../models/types.js";
 import { randomUUID } from "node:crypto";
 
 import { blobToEmbedding, cosineSimilarity } from "./embeddings.js";
@@ -62,12 +66,9 @@ export async function resolveEntities(
       continue;
     }
 
-    const candidates = await generateCandidates(
-      db,
-      embeddingModel,
-      entity,
-      [...mentionToNode.values()],
-    );
+    const candidates = await generateCandidates(db, embeddingModel, entity, [
+      ...mentionToNode.values(),
+    ]);
 
     let matchedNodeId: string | null = null;
     for (const candidate of candidates.slice(0, VERIFICATION_CANDIDATE_LIMIT)) {
@@ -283,7 +284,7 @@ async function verifyMatch(
     {
       role: "system",
       content:
-        "You verify entity identity. Answer whether the new mention refers to the SAME real-world entity as the existing node. When uncertain, say they are NOT the same. Structured yes/no only.",
+        'You verify entity identity for a knowledge graph. Decide whether the new mention refers to the SAME real-world entity as the existing node. When uncertain, set same_entity=false. Respond only as JSON matching the schema: {"same_entity": boolean, "confident": boolean}. Do not answer with bare yes/no.',
     },
     {
       role: "user",

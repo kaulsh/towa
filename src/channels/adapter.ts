@@ -21,7 +21,16 @@ export interface InboundMessage {
 }
 
 export type OutboundMessage =
-  | { type: "text"; text: string }
+  | {
+      type: "text";
+      text: string;
+      /**
+       * When false, send on the wire only — do not append `raw_log` or close
+       * an episode. For transport-only notices (e.g. harness error apologies)
+       * that must not enter durable memory / working context. Default true.
+       */
+      recordInRawLog?: boolean;
+    }
   | { type: "image"; caption?: string; data: string; mimeType: string }
   | { type: "video"; caption?: string; data: string; mimeType: string }
   | { type: "audio"; caption?: string; data: string; mimeType: string };

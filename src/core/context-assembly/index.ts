@@ -1,6 +1,7 @@
 export {
   computeTokenBudgets,
 } from "./budgets.js";
+export { loadRecentWorkingTurns } from "./load-turns.js";
 export {
   applySessionBoundary,
   buildWorkingContext,

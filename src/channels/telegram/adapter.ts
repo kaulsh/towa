@@ -197,18 +197,35 @@ export function createTelegramAdapter(
     start(): void {
       if (config.webhook) {
         const { domain, port, path, host, secretToken } = config.webhook;
-        void bot.launch({
-          webhook: {
-            domain,
-            ...(port !== undefined ? { port } : {}),
-            ...(path !== undefined ? { path } : {}),
-            ...(host !== undefined ? { host } : {}),
-            ...(secretToken !== undefined ? { secretToken } : {}),
-          },
-        });
+        log.info(
+          { mode: "webhook", domain, port, path },
+          "starting Telegram bot",
+        );
+        void bot
+          .launch({
+            webhook: {
+              domain,
+              ...(port !== undefined ? { port } : {}),
+              ...(path !== undefined ? { path } : {}),
+              ...(host !== undefined ? { host } : {}),
+              ...(secretToken !== undefined ? { secretToken } : {}),
+            },
+          })
+          .catch((err) =>
+            log.error({ err, mode: "webhook" }, "Telegram bot launch failed"),
+          );
       } else {
         // Long-polling — zero infrastructure (§7.2).
-        void bot.launch();
+        // `launch()`'s promise resolves when the bot stops, not when polling begins.
+        log.info(
+          { mode: "polling", chatId: config.chatId },
+          "starting Telegram bot (long polling)",
+        );
+        void bot
+          .launch()
+          .catch((err) =>
+            log.error({ err, mode: "polling" }, "Telegram bot launch failed"),
+          );
       }
     },
 
@@ -268,6 +285,12 @@ export function createTelegramAdapter(
             `TelegramAdapter.send: unsupported OutboundMessage: ${JSON.stringify(_exhaustive)}`,
           );
         }
+      }
+
+      const recordInRawLog =
+        message.type !== "text" || message.recordInRawLog !== false;
+      if (!recordInRawLog) {
+        return String(sent.message_id);
       }
 
       const content =

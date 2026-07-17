@@ -1,6 +1,10 @@
 import type { Kysely } from "kysely";
 
 import type { Database, RawLogRole } from "../../db/types.js";
+import {
+  deleteFtsBySource,
+  indexRawLogForFts,
+} from "../retrieval/fts-index.js";
 
 export interface AppendRawLogMessageInput {
   timestamp: number;
@@ -46,6 +50,9 @@ export async function appendRawLogMessage(
     .returning("id")
     .executeTakeFirstOrThrow();
 
+  // Lexical index must stay current for forced retrieval (§5.2).
+  await indexRawLogForFts(db, result.id, input.content);
+
   return result.id;
 }
 
@@ -79,6 +86,9 @@ export async function appendRawLogEdit(
     })
     .returning("id")
     .executeTakeFirstOrThrow();
+
+  // Keep searchable text on the original id (edits are append-only rows).
+  await indexRawLogForFts(db, input.originalId, input.content);
 
   return result.id;
 }
@@ -114,6 +124,8 @@ export async function appendRawLogDelete(
     })
     .returning("id")
     .executeTakeFirstOrThrow();
+
+  await deleteFtsBySource(db, "raw_log", String(input.originalId));
 
   return result.id;
 }

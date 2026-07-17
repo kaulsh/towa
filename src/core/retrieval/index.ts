@@ -1,5 +1,10 @@
 export { assembleRetrievedContext, formatRetrievedBlocks } from "./assemble.js";
-export { indexGistForFts, indexRawLogForFts, escapeFtsQuery } from "./fts-index.js";
+export {
+  deleteFtsBySource,
+  indexGistForFts,
+  indexRawLogForFts,
+  escapeFtsQuery,
+} from "./fts-index.js";
 export { generateWithGate } from "./gate.js";
 export { multiSignalSearch } from "./multi-signal.js";
 export { runRetrievalAndGenerate } from "./pipeline.js";

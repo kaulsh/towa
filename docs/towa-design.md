@@ -305,7 +305,7 @@ interface InboundMessage {
 }
 
 type OutboundMessage =
-  | { type: 'text'; text: string }
+  | { type: 'text'; text: string; recordInRawLog?: boolean }  // false = wire-only notice (no raw_log / episode close)
   | { type: 'image'; caption?: string; data: string; mimeType: string }  // base64
   | { type: 'video'; caption?: string; data: string; mimeType: string }  // base64
   | { type: 'audio'; caption?: string; data: string; mimeType: string }; // base64
@@ -482,6 +482,7 @@ towa/
       retrieval/            # query-gen, multi-signal search, RRF, gate loop
       context-assembly/    # working-context window, session boundaries
       write-path/          # pending_extraction queue + drain worker
+      harness/              # agent loop: debounce → retrieval → reply + drain start
     channels/
       adapter.ts            # ChannelAdapter interface + shared types
       telegram/

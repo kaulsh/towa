@@ -62,9 +62,7 @@ type OpenAIChatContent =
         }
     >;
 
-function audioFormatFromMime(
-  mimeType: string,
-): "wav" | "mp3" {
+function audioFormatFromMime(mimeType: string): "wav" | "mp3" {
   if (mimeType.includes("mpeg") || mimeType.includes("mp3")) return "mp3";
   return "wav";
 }
@@ -104,14 +102,18 @@ function toOpenAIMessages(
       return {
         role: "system",
         content:
-          typeof content === "string" ? content : flattenMessageText(message.content),
+          typeof content === "string"
+            ? content
+            : flattenMessageText(message.content),
       };
     }
     if (message.role === "assistant") {
       return {
         role: "assistant",
         content:
-          typeof content === "string" ? content : flattenMessageText(message.content),
+          typeof content === "string"
+            ? content
+            : flattenMessageText(message.content),
       };
     }
     return { role: "user", content };
@@ -143,7 +145,10 @@ export async function loadOpenAICompatible(
     baseURL: config.baseURL,
   });
 
-  const contextWindow = resolveContextWindow(config.model, config.contextWindow);
+  const contextWindow = resolveContextWindow(
+    config.model,
+    config.contextWindow,
+  );
   const capabilities = {
     structuredOutput: config.structuredOutput ?? true,
     vision: config.vision ?? false,
@@ -164,7 +169,11 @@ export async function loadOpenAICompatible(
           response_format: zodResponseFormat(input.schema, "output"),
         });
         const text = completion.choices[0]?.message?.content ?? "";
-        return { text, structured: parseStructuredText(text, input.schema) };
+        try {
+          return { text, structured: parseStructuredText(text, input.schema) };
+        } catch {
+          return { text };
+        }
       }
 
       const completion = await client.chat.completions.create({

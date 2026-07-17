@@ -10,15 +10,15 @@ const QueryGenSchema = z.object({
   search_queries: z.array(z.string()).min(1),
   entity_names: z.array(z.string()).default([]),
   /** Soft hint only — must not be the sole gate to historical retrieval (§5.3). */
-  include_history_hint: z.boolean().optional().default(false),
+  include_history_hint: z.boolean().default(false),
   history_requests: z
     .array(
       z.object({
         entity: z.string(),
-        relation: z.string().optional(),
+        // Required + nullable: OpenAI structured-outputs reject bare `.optional()`.
+        relation: z.string().nullable().default(null),
       }),
     )
-    .optional()
     .default([]),
 });
 
@@ -61,7 +61,7 @@ ${contextBlock}
 Current message:
 ${message}${followUpBlock}
 
-Return JSON with keys: search_queries (string[]), entity_names (string[]), include_history_hint (boolean), history_requests ({entity, relation?}[]).`;
+Return JSON with keys: search_queries (string[]), entity_names (string[]), include_history_hint (boolean), history_requests ({entity, relation: string|null}[]).`;
 
   const raw = await generateStructured(
     chatModel,
@@ -75,7 +75,7 @@ Return JSON with keys: search_queries (string[]), entity_names (string[]), inclu
   const historyRequests: HistoryRequest[] = (raw.history_requests ?? []).map(
     (h) => ({
       entity: h.entity,
-      ...(h.relation !== undefined ? { relation: h.relation } : {}),
+      ...(h.relation != null ? { relation: h.relation } : {}),
     }),
   );
 

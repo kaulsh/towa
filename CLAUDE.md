@@ -79,6 +79,8 @@ Pulled from the design doc's §11 (Explicitly Deferred / Rejected) — these wer
 - Module/folder naming should mirror the design doc's structure where practical — see §12's suggested repo layout as the starting scaffold, not a strict requirement.
 - Core libraries are chosen (§13 in the design doc) — Kysely, Zod, Telegraf, Pino.
 - **Build / typecheck:** `pnpm build` (`tsc`), `pnpm typecheck` (`tsc --noEmit`). No lint or unit-test runner yet (evals are the correctness signal per design doc §9.3).
+- **Workspace:** root package `towa` is the library; `examples/*` are consumers via `pnpm-workspace.yaml`. Build the library before running an example (`pnpm build`, then e.g. `pnpm --filter @towa/telegram-daemon start`).
+- **Daemon consumers use `createHarness`.** Examples/apps load models, open the DB, construct a `ChannelAdapter`, then call `createHarness(...).start()` — they do not reimplement debounce / retrieval wire-up / drain startup (§6, §13).
 
 ---
 
