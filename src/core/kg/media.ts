@@ -1,9 +1,14 @@
+import type { Kysely } from "kysely";
+
 import type { ChannelAdapter, MediaRef } from "../../channels/adapter.js";
+import type { Database } from "../../db/types.js";
 import type {
   ChatMessage,
   LoadedChatModel,
   MessagePart,
 } from "../../models/types.js";
+import { appendRawLogEdit } from "../raw-log/index.js";
+import type { ResolvedTurn } from "../raw-log/resolve-turns.js";
 
 import type { EpisodeTurn } from "./types.js";
 
@@ -12,6 +17,9 @@ import type { EpisodeTurn } from "./types.js";
  * Raw bytes are ephemeral; only the text artifact is durable.
  * Capability-gated; never fails the whole extraction on missing capability
  * or fetchMedia errors — degrade to "media existed, no content."
+ *
+ * Callers should pass wire/user caption content (not a prior media_artifact
+ * tip) as `turn.content` so re-extract does not double-append artifacts.
  */
 export async function enrichTurnsWithMedia(
   turns: EpisodeTurn[],
@@ -34,6 +42,53 @@ export async function enrichTurnsWithMedia(
     out.push({ ...turn, content });
   }
   return out;
+}
+
+/**
+ * Persist enriched media text via append-only edits (§2.1 / §7.3).
+ *
+ * Idempotency: skip when the latest resolved tip already equals the enriched
+ * content — re-runs do not spam duplicate identical edits. When enrichment
+ * improves the transcript, a new edit is appended (never UPDATE/DELETE the
+ * original). All writes are short and separate from any LLM call (§4.2).
+ */
+export async function persistMediaTextArtifacts(
+  db: Kysely<Database>,
+  before: readonly ResolvedTurn[],
+  enriched: readonly EpisodeTurn[],
+): Promise<number> {
+  const beforeById = new Map(before.map((t) => [t.id, t]));
+  let appended = 0;
+  const nowSec = Math.floor(Date.now() / 1000);
+
+  for (const turn of enriched) {
+    const prior = beforeById.get(turn.id);
+    if (!prior) {
+      continue;
+    }
+    const mediaRef = extractMediaRef(turn.sourceMeta);
+    if (!mediaRef) {
+      continue;
+    }
+    if (turn.content === prior.content) {
+      // Latest tip already matches — nothing to write.
+      continue;
+    }
+
+    await appendRawLogEdit(db, {
+      originalId: turn.id,
+      timestamp: nowSec,
+      content: turn.content,
+      sourceMeta: {
+        kind: "media_artifact",
+        of: turn.id,
+        mediaRef,
+      },
+    });
+    appended += 1;
+  }
+
+  return appended;
 }
 
 function extractMediaRef(sourceMeta: unknown): MediaRef | null {

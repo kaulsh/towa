@@ -2,6 +2,7 @@ import type { Kysely } from "kysely";
 
 import type { Database } from "../../db/types.js";
 import type { LoadedChatModel } from "../../models/types.js";
+import { resolveTurnsForIdRange } from "../raw-log/index.js";
 
 import {
   getHistory,
@@ -132,18 +133,17 @@ async function loadEpisodeTurns(
     return { episodeId, turns: [] };
   }
 
-  const rows = await db
-    .selectFrom("raw_log")
-    .select(["id", "role", "content", "timestamp", "deleted_marker"])
-    .where("id", ">=", episode.start_msg_id)
-    .where("id", "<=", episode.end_msg_id)
-    .where("deleted_marker", "=", 0)
-    .orderBy("id", "asc")
-    .execute();
+  // Edit-aware: fold media_artifact / user edits whose ids sit outside the
+  // episode range into the original turn ids (§2.1 / Track F).
+  const resolved = await resolveTurnsForIdRange(
+    db,
+    episode.start_msg_id,
+    episode.end_msg_id,
+  );
 
   return {
     episodeId,
-    turns: rows.map((r) => ({
+    turns: resolved.map((r) => ({
       id: r.id,
       role: r.role,
       content: r.content,

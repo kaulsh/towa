@@ -6,6 +6,14 @@ import {
   indexRawLogForFts,
 } from "../retrieval/fts-index.js";
 
+export {
+  isMediaArtifactMeta,
+  resolveLatestContent,
+  resolveRecentTurns,
+  resolveTurnsForIdRange,
+} from "./resolve-turns.js";
+export type { ResolvedTurn } from "./resolve-turns.js";
+
 export interface AppendRawLogMessageInput {
   timestamp: number;
   role: RawLogRole;

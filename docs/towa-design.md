@@ -70,6 +70,8 @@ raw_log
 
 Edits and deletes **never mutate a row in place** — they append a new row referencing the original (`edit_of`), or a delete-marker row. The raw log is a strict transcript of everything that ever crossed the wire.
 
+**Read resolution:** verbatim turn loaders (working context, retrieved episodes, extraction) resolve each original id to the **latest non-deleted tip** targeting it via `edit_of` — including system `media_artifact` edits whose new ids fall outside the episode's `[start_msg_id, end_msg_id]` (enrichment runs after the episode closes; see §7.3). Edit rows are never listed as additional turns; the original id is preserved for episode identity and provenance.
+
 ### 2.2 Episodes (derived)
 
 **Unit of KG extraction.** An episode is the run of consecutive user messages since the last assistant message, plus the assistant reply that closes it:
@@ -332,6 +334,7 @@ Sole v1 implementation, built on **Telegraf** (§13). Translates Telegram Bot AP
 **The raw log never stores media bytes — only a reference (`MediaRef`) plus, once available, a text-derived artifact.**
 
 - At extraction time (§4), if an episode contains voice or image media, the worker calls `fetchMedia(ref)` and checks the active chat model's capabilities (§8.1): if `capabilities.audioInput` (for voice) or `capabilities.vision` (for images) is true, the raw bytes are passed directly into a multimodal `generate()` call to produce a transcript/description. There is no separate transcription library or pipeline — transcription and captioning are both just capability-gated multimodal generation. If the active model lacks the relevant capability, extraction degrades gracefully to recording that media of that kind existed, without content.
+- The text artifact is written back with `appendRawLogEdit` (`source_meta.kind = "media_artifact"`) so FTS and edit-aware readers (§2.1) see it; the original row is never mutated.
 - **Decision: transcripts/captions are eternal; raw media bytes are best-effort/ephemeral.** Platform file references (e.g. Telegram file IDs) typically expire, so the binary is not guaranteed retrievable months or years later — only its text-derived description is treated as durable memory. `fetchMedia` may also be called on-demand at query time if a retrieved episode's caption is insufficient to answer a question and the reference hasn't expired yet — an optional, best-effort path, not part of the durable guarantee.
 
 ---

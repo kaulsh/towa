@@ -11,12 +11,14 @@ import {
   markExtractionInProgress,
 } from "../write-path/queue.js";
 
+import { resolveTurnsForIdRange } from "../raw-log/index.js";
+
 import { commitExtraction } from "./commit.js";
 import { prepareEdgeWrites } from "./edges.js";
 import { resolveEntities } from "./entity-resolution.js";
 import { extractEpisodeKnowledge } from "./extract.js";
 import { clearEpisodeExtractionArtifacts } from "./idempotency.js";
-import { enrichTurnsWithMedia } from "./media.js";
+import { enrichTurnsWithMedia, persistMediaTextArtifacts } from "./media.js";
 import type { EpisodeTurn } from "./types.js";
 
 export interface RunExtractionDeps {
@@ -29,9 +31,10 @@ export interface RunExtractionDeps {
 /**
  * Extract KG + gist for one episode (§4).
  *
- * Sequence: check status → mark in_progress → clear prior artifacts →
- * load turns → media enrich + LLM extract + entity resolve + embed (all
- * outside write txn) → one short txn for nodes/edges/gist/done.
+ * Sequence: check status → mark in_progress → clear prior KG artifacts →
+ * edit-aware load turns → media enrich + persist text artifacts + LLM extract
+ * + entity resolve + embed (all outside the final KG write txn) → one short
+ * txn for nodes/edges/gist/done.
  */
 export async function runExtraction(
   episodeId: number,
@@ -50,7 +53,8 @@ export async function runExtraction(
 
   await markExtractionInProgress(db, episodeId);
 
-  // Drop any partial writes from a prior crashed attempt before re-extracting.
+  // Drop any partial KG writes from a prior crashed attempt before re-extracting.
+  // Media text edits stay append-only; persistMediaTextArtifacts skips identical tips.
   await clearEpisodeExtractionArtifacts(db, episodeId);
 
   const episode = await db
@@ -63,26 +67,33 @@ export async function runExtraction(
     throw new Error(`runExtraction: episode ${episodeId} not found`);
   }
 
-  const rawTurns = await db
-    .selectFrom("raw_log")
-    .select(["id", "timestamp", "role", "content", "source_meta"])
-    .where("id", ">=", episode.start_msg_id)
-    .where("id", "<=", episode.end_msg_id)
-    .where("deleted_marker", "=", 0)
-    .orderBy("id", "asc")
-    .execute();
+  // Edit-aware: media_artifact rows land outside [start, end] after close.
+  const resolvedTurns = await resolveTurnsForIdRange(
+    db,
+    episode.start_msg_id,
+    episode.end_msg_id,
+  );
 
-  const turns: EpisodeTurn[] = rawTurns.map((row) => ({
-    id: row.id,
-    timestamp: row.timestamp,
-    role: row.role,
-    content: row.content,
-    sourceMeta: parseJson(row.source_meta),
+  // Enrich from wire/user caption (not a prior media_artifact tip) so re-runs
+  // replace the artifact instead of double-appending.
+  const turnsForEnrich: EpisodeTurn[] = resolvedTurns.map((t) => ({
+    id: t.id,
+    timestamp: t.timestamp,
+    role: t.role,
+    content: t.wireContent,
+    sourceMeta: t.sourceMeta,
   }));
 
   // --- Slow work: no open write transaction (§4.2) ---
 
-  const enrichedTurns = await enrichTurnsWithMedia(turns, chatModel, adapter);
+  const enrichedTurns = await enrichTurnsWithMedia(
+    turnsForEnrich,
+    chatModel,
+    adapter,
+  );
+
+  // Short isolated writes — before the extract LLM, still outside KG txn.
+  await persistMediaTextArtifacts(db, resolvedTurns, enrichedTurns);
 
   const extraction = await extractEpisodeKnowledge(
     chatModel,
@@ -119,12 +130,4 @@ export async function runExtraction(
     gistText: extraction.gist,
     gistEmbedding: gistEmbedding ?? [],
   });
-}
-
-function parseJson(raw: string): unknown {
-  try {
-    return JSON.parse(raw) as unknown;
-  } catch {
-    return raw;
-  }
 }
