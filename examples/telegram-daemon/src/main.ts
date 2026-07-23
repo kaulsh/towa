@@ -2,7 +2,7 @@
  * Telegram daemon example — configure env/loaders/adapter, start the harness.
  *
  * Bootstrap only: dotenv + model load + openDatabase + createTelegramAdapter
- * + createHarness. The agent loop lives in `towa` (§6 / §13).
+ * + createHarness. The agent loop lives in `@towa/core` (§6 / §13).
  */
 
 import { resolve } from "node:path";
@@ -12,7 +12,6 @@ import { config as loadDotenv } from "dotenv";
 import pino from "pino";
 import {
   createHarness,
-  createTelegramAdapter,
   loadLocalEmbeddings,
   loadOllama,
   loadOpenAICompatible,
@@ -20,7 +19,8 @@ import {
   openDatabase,
   type LoadedChatModel,
   type LoadedEmbeddingModel,
-} from "towa";
+} from "@towa/core";
+import { createTelegramAdapter } from "@towa/telegram";
 
 import { loadConfig, type DaemonConfig } from "./config.js";
 

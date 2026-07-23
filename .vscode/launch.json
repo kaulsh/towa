@@ -10,7 +10,8 @@
       "sourceMaps": true,
       "outFiles": [
         "${workspaceFolder}/examples/telegram-daemon/dist/**/*.js",
-        "${workspaceFolder}/dist/**/*.js"
+        "${workspaceFolder}/packages/core/dist/**/*.js",
+        "${workspaceFolder}/packages/telegram/dist/**/*.js"
       ]
     }
   ]

@@ -79,9 +79,9 @@ Pulled from the design doc's §11 (Explicitly Deferred / Rejected) — these wer
 - Prefer plain functions and factory functions over classes where reasonable (matches the loader-factory and adapter patterns already established).
 - Module/folder naming should mirror the design doc's structure where practical — see §12's suggested repo layout as the starting scaffold, not a strict requirement.
 - Core libraries are chosen (§13 in the design doc) — Kysely, Zod, Telegraf, Pino.
-- **Build / typecheck:** `pnpm build` (`tsc`), `pnpm build:w` (`tsc -w --incremental`), `pnpm typecheck` (`tsc --noEmit`). No lint or unit-test runner yet (evals are the correctness signal per design doc §9.3).
-- **Workspace:** root package `towa` is the library; `examples/*` are consumers via `pnpm-workspace.yaml`. Examples emit to `dist/` and run via `node --watch-path` (not `tsx`) so debugger source maps work. `pnpm --filter @towa/telegram-daemon dev` watches both `towa` and the example, then attaches inspect on `127.0.0.1:11001`.
-- **Daemon consumers use `createHarness`.** Examples/apps load models, open the DB, construct a `ChannelAdapter`, then call `createHarness(...).start()` — they do not reimplement debounce / retrieval wire-up / drain startup (§6, §13).
+- **Build / typecheck:** from the repo root, `pnpm build` / `pnpm typecheck` run recursively across `packages/*` and `examples/*`. Per-package: `pnpm --filter @towa/core build`, etc. No lint or unit-test runner yet (evals are the correctness signal per design doc §9.3).
+- **Workspace:** root is a private aggregator (`towa-monorepo`). Libraries live under `packages/` — `@towa/core` (harness/DB/models/adapter interface), `@towa/telegram`, plus stubs `@towa/daemon` and `towa` (CLI). `examples/*` and `evals` are workspace members. Examples emit to `dist/` and run via `node --watch-path` (not `tsx`) so debugger source maps work. `pnpm --filter @towa/telegram-daemon dev` watches `@towa/core` + `@towa/telegram` + the example, then attaches inspect on `127.0.0.1:11001`.
+- **Daemon consumers use `createHarness`.** Examples/apps load models, open the DB, construct a channel adapter (e.g. `createTelegramAdapter` from `@towa/telegram`), then call `createHarness(...).start()` — they do not reimplement debounce / retrieval wire-up / drain startup (§6, §13).
 
 ---
 

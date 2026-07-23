@@ -3,25 +3,21 @@ import { Telegraf } from "telegraf";
 import type { Message } from "telegraf/types";
 import pino from "pino";
 
-import type { Database } from "../../db/types.js";
 import {
   appendRawLogEdit,
   appendRawLogMessage,
-} from "../../core/raw-log/index.js";
-import {
   closeEpisode,
   deriveEpisodeBoundary,
-} from "../../core/episodes/index.js";
-import { enqueuePendingExtraction } from "../../core/write-path/queue.js";
-import type {
-  ChannelAdapter,
-  DeleteEvent,
-  EditEvent,
-  InboundMessage,
-  MediaRef,
-  OutboundMessage,
-  PresenceEvent,
-} from "../adapter.js";
+  enqueuePendingExtraction,
+  type ChannelAdapter,
+  type Database,
+  type DeleteEvent,
+  type EditEvent,
+  type InboundMessage,
+  type MediaRef,
+  type OutboundMessage,
+  type PresenceEvent,
+} from "@towa/core";
 import { createTelegramApi } from "./api.js";
 import {
   isContentMessage,

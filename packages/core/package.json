@@ -1,0 +1,39 @@
+{
+  "name": "@towa/core",
+  "version": "0.1.0",
+  "description": "Towa core library — harness, DB, models, and channel adapter interface.",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "build:w": "tsc -w --incremental",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@huggingface/transformers": "^4.2.0",
+    "better-sqlite3": "^11.10.0",
+    "js-tiktoken": "^1.0.21",
+    "kysely": "^0.28.2",
+    "node-llama-cpp": "^3.19.0",
+    "ollama": "^0.6.3",
+    "openai": "^6.46.0",
+    "pino": "^9.7.0",
+    "sqlite-vec": "^0.1.7-alpha.2",
+    "zod": "^3.25.67"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/node": "^22.15.32",
+    "typescript": "^5.8.3"
+  }
+}

@@ -7,18 +7,19 @@
   "scripts": {
     "build": "tsc",
     "build:w": "tsc -w --incremental",
-    "towa:build": "pnpm -C ../.. run build",
-    "towa:w": "pnpm -C ../.. run build:w",
+    "libs:build": "pnpm -C ../.. --filter @towa/core --filter @towa/telegram run build",
+    "libs:w": "pnpm -C ../.. --filter @towa/core --filter @towa/telegram --parallel run build:w",
     "dev:node": "node --watch-path=./dist --watch-preserve-output --enable-source-maps --inspect=127.0.0.1:11001 dist/main.js | pino-pretty --config .pino-prettyrc",
-    "dev": "pnpm run towa:build && tsc && run-p build:w towa:w dev:node",
+    "dev": "pnpm run libs:build && tsc && run-p build:w libs:w dev:node",
     "start": "node --enable-source-maps dist/main.js | pino-pretty --config .pino-prettyrc",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@towa/core": "workspace:*",
+    "@towa/telegram": "workspace:*",
     "dotenv": "^16.5.0",
     "pino": "^9.7.0",
-    "pino-pretty": "^13.1.2",
-    "towa": "workspace:*"
+    "pino-pretty": "^13.1.2"
   },
   "devDependencies": {
     "@types/node": "^22.15.32",

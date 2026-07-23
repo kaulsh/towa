@@ -1,0 +1,11 @@
+{
+  "name": "@towa/evals",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Towa eval harness scaffolding (gold-sets / promptfoo). Stub package until evals land.",
+  "type": "module",
+  "scripts": {
+    "build": "echo \"@towa/evals: no build yet\"",
+    "typecheck": "echo \"@towa/evals: no typecheck yet\""
+  }
+}

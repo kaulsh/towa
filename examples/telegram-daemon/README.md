@@ -2,7 +2,7 @@
 
 Configures and starts the Towa harness against Telegram: env → load models → open DB → `createTelegramAdapter` → `createHarness(...).start()`.
 
-The agent loop (burst debounce, forced retrieval, reply, drain worker) lives in `towa` — this package only bootstraps.
+The agent loop (burst debounce, forced retrieval, reply, drain worker) lives in `@towa/core`; the Telegram adapter is `@towa/telegram`. This package only bootstraps.
 
 ## Prerequisites
 
@@ -34,15 +34,15 @@ cp .env.example .env
 From `examples/telegram-daemon` (or `pnpm --filter @towa/telegram-daemon …` at the repo root):
 
 ```bash
-# one-shot (needs a prior `pnpm build` in this package + root `towa`)
+# one-shot (needs a prior `pnpm build` for @towa/core, @towa/telegram, and this package)
 pnpm start
 
-# watch: tsc for towa + this example, then node --watch-path on dist/
+# watch: tsc for @towa/core + @towa/telegram + this example, then node --watch-path on dist/
 # inspect listens on 127.0.0.1:11001 — use VS Code "Attach to 11001"
 pnpm dev
 ```
 
-`dev` runs compiled JS with `--enable-source-maps` (not `tsx`), so breakpoints in both the example and `towa` resolve correctly.
+`dev` runs compiled JS with `--enable-source-maps` (not `tsx`), so breakpoints in both the example and the library packages resolve correctly.
 
 ## Required env
 
@@ -63,7 +63,7 @@ See `.env.example` for the full list.
 ## What this configures
 
 1. Env / dotenv
-2. Chat + embedding loaders
+2. Chat + embedding loaders (`@towa/core`)
 3. `openDatabase` (+ migrate)
-4. `createTelegramAdapter` (long-polling)
+4. `createTelegramAdapter` (`@towa/telegram`, long-polling)
 5. `createHarness({ db, channel, chatModel, embeddingModel, … }).start()`

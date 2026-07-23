@@ -5,15 +5,20 @@ Telegram-native AI agent harness built around durable long-term memory recall. A
 ## Workspace
 
 ```
-towa/                          # library package (`import "towa"`)
-examples/telegram-daemon/      # runnable Telegram smoke daemon
+packages/core/          # @towa/core — harness, DB, models, ChannelAdapter interface
+packages/telegram/      # @towa/telegram — Telegram channel adapter
+packages/daemon/        # @towa/daemon — stub (product work next)
+packages/cli/           # towa — stub CLI binary (product work next)
+examples/telegram-daemon/
+evals/                  # @towa/evals scaffolding
+docs/
 ```
 
 ## Build
 
 ```bash
 pnpm install
-pnpm build          # compile library → dist/
+pnpm build          # build packages + examples
 pnpm typecheck
 ```
 

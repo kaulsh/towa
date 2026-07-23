@@ -4,7 +4,7 @@ import type {
   EditEvent,
   InboundMessage,
   MediaRef,
-} from "../adapter.js";
+} from "@towa/core";
 
 /**
  * Extract a MediaRef from a Telegram message, if any.

@@ -1,12 +1,13 @@
 /**
- * Public library surface for Towa (§13).
+ * Public library surface for `@towa/core` (§13).
  *
  * Typical daemon consumer:
- *   openDatabase → load* models → createTelegramAdapter (or any ChannelAdapter)
+ *   openDatabase → load* models → createTelegramAdapter (from `@towa/telegram`)
  *   → createHarness(...).start()
  *
- * Also exported: ChannelAdapter + model interface types for custom adapters/loaders.
- * Internal planes (raw-log, retrieval, KG, drain, debounce) are not part of this API.
+ * Also exported: ChannelAdapter + model interface types for custom adapters/loaders,
+ * plus a few write-path helpers the Telegram adapter currently needs.
+ * Internal planes (retrieval, KG, drain, debounce) are not part of this API.
  */
 
 // Database
@@ -43,7 +44,7 @@ export {
   type OpenAICompatibleEmbeddingsConfig,
 } from "./models/loaders/index.js";
 
-// Channel — interface for custom adapters + Telegram v1 implementation
+// Channel interface — adapters live in separate packages (e.g. `@towa/telegram`)
 export type {
   ChannelAdapter,
   DeleteEvent,
@@ -53,11 +54,17 @@ export type {
   OutboundMessage,
   PresenceEvent,
 } from "./channels/adapter.js";
+
+// Write-path helpers used by channel adapters (Telegram today)
 export {
-  createTelegramAdapter,
-  type TelegramAdapterConfig,
-  type TelegramWebhookConfig,
-} from "./channels/telegram/index.js";
+  appendRawLogEdit,
+  appendRawLogMessage,
+} from "./core/raw-log/index.js";
+export {
+  closeEpisode,
+  deriveEpisodeBoundary,
+} from "./core/episodes/index.js";
+export { enqueuePendingExtraction } from "./core/write-path/queue.js";
 
 // Harness — primary runtime entry (§6)
 export {
