@@ -31,8 +31,20 @@ export const ExtractedEdgeSchema = z.object({
 export const EpisodeExtractionSchema = z.object({
   /** One-sentence dense retrieval handle — always required (§2.4). */
   gist: z.string().min(1),
-  entities: z.array(ExtractedEntitySchema).default([]),
-  edges: z.array(ExtractedEdgeSchema).default([]),
+  /** Durable personal entities only; empty when nothing personal/durable (§2.3, §4). */
+  entities: z
+    .array(ExtractedEntitySchema)
+    .default([])
+    .describe(
+      "Entities for durable personal facts only; empty array when none",
+    ),
+  /** Durable personal edges only; empty when nothing personal/durable (§2.3, §4). */
+  edges: z
+    .array(ExtractedEdgeSchema)
+    .default([])
+    .describe(
+      "Edges for durable personal facts only; empty array when none",
+    ),
 });
 
 export type ExtractedEntity = z.infer<typeof ExtractedEntitySchema>;

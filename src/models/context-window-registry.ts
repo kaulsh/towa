@@ -8,6 +8,7 @@ export const KNOWN_CONTEXT_WINDOWS: Record<string, number> = {
   "llama3.2:1b": 128_000,
   "llama3.2:3b": 128_000,
   "llama3.3:70b": 128_000,
+  "qwen3.5:9b": 256_000,
   "qwen3.6:latest": 256_000,
   "qwen3.6:27b": 256_000,
   "qwen3.6:35b": 256_000,

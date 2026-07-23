@@ -122,6 +122,7 @@ kg_edges
 - Facts are never deleted on contradiction — they are **closed** (`valid_to` set) and a new edge is opened. History is always intact.
 - **Open edges use a far-future sentinel** (e.g. `9999-01-01`) instead of `NULL` for `valid_to`. This makes every temporal query a uniform `valid_from <= now AND now < valid_to` — no NULL-branching, clean range indexes, and correct handling of future-dated facts ("I'm moving next month").
 - **Edge invalidation rule:** the extraction pass checks new edges against existing edges on the same `(subject, relation)`. Closes the old edge only on **clear contradiction** for relations that are inherently single-valued (residence, job, relationship status). For many-valued relations (friendships, projects), new mentions are **additive by default** — never silently replace.
+- **KG salience is fact-level, not episode-level:** store only durable personal facts and preferences (identity, likes/dislikes, people/places the user cares about, stated plans, lasting attributes) — including prefs mentioned casually in chitchat. Do not write greetings-only content, agent meta ("I don't recall"), or world-knowledge / encyclopedia Q&A from either side. Empty `entities`/`edges` is correct when nothing personal is durable; the episode gist remains unconditional (§2.4). This is prompt-side filtering in the same extraction pass — not a separate relevance-judge call, and not episode-level skipping of gist/embedding.
 
 ### 2.4 Episode Gist
 
@@ -157,7 +158,7 @@ episode_gists
 
 ### 4.1 Timing: Async, not sync
 
-Extraction (entity resolution, edge writes, gist generation) runs **after** the agent has already replied, off a background queue — never inline before the response, which would stall every message behind a multi-second LLM call.
+Extraction (entity resolution, edge writes, gist generation) runs **after** the agent has already replied, off a background queue — never inline before the response, which would stall every message behind a multi-second LLM call. The same pass applies **fact-level KG salience** (§2.3): only durable personal facts become nodes/edges; the gist is always written.
 
 **Why this is safe, not just fast:** the read-your-writes gap this could create is already closed by earlier layers. The raw log is written **synchronously** (a plain fast insert), so verbatim content is immediately searchable by FTS5/vec. Recently-stated facts also live in the working-context buffer (§6) regardless of KG state. The KG only needs to have caught up by the time a fact becomes *old* — and old facts were extracted long ago. A few seconds of extraction lag costs nothing in practice.
 
@@ -275,7 +276,9 @@ Per turn: `system prompt + working-context buffer + retrieved memory (§5) + new
 
 **Session boundary:** an idle gap beyond a threshold (e.g. >2 hours) resets the working-context buffer rather than letting it slide continuously. The first message of a new session naturally triggers retrieval to pull back whatever's relevant; carrying yesterday's tail forward is dead weight.
 
-**Burst debounce (runtime, ephemeral, distinct from the stored episode boundary in §2.2):** after a message arrives, wait for a short idle gap (extended by further messages or a Telegram `typing` signal) before generating a reply, with a max cap so a long monologue still gets a response. This state is never persisted — once a reply is sent, the episode boundary is recoverable from the log alone.
+**Burst debounce (runtime, ephemeral, distinct from the stored episode boundary in §2.2):** after a message arrives, wait for a short idle gap (extended by further messages or a Telegram `typing` signal) before generating a reply, with a max cap so a long monologue still gets a response. The harness joins every message in the fired burst into one generation input (not only the latest). Messages that arrive for the same chat while a turn is already in flight are folded into that turn — regenerating once before send — rather than becoming a second reply. This state is never persisted — once a reply has been sent, the episode boundary is recoverable from the log alone.
+
+**Slash-command intercept (harness-local, before retrieval):** leading `/` commands are parsed as plain text in the agent loop — not via channel-specific command APIs (e.g. Telegraf `bot.command`). `/start` returns a short help blurb (wire-only; not recorded in `raw_log`). `/init` starts or resumes a short adaptive fact-goal interview (structured interviewer LLM; soft target ~10 turns, hard cap 15) that skips the forced-retrieval pipeline while active; `/init cancel` stops asking without wiping already-resolved goals. Interview replies use the normal send path so they enter durable memory; extraction still runs asynchronously as usual.
 
 ---
 
@@ -325,7 +328,7 @@ The core agent loop only ever talks to `ChannelAdapter` — it has no knowledge 
 
 ### 7.2 `TelegramAdapter`
 
-Sole v1 implementation, built on **Telegraf** (§13). Translates Telegram Bot API events into the normalized shapes above; maps `OutboundMessage` variants to Telegraf's `sendMessage`/`sendPhoto`/`sendVideo`/`sendVoice`. Edits/deletes arrive as `EditEvent`/`DeleteEvent` and are appended to the raw log as new rows (§2.1) — never in-place mutation.
+Sole v1 implementation, built on **Telegraf** (§13). Translates Telegram Bot API events into the normalized shapes above; maps `OutboundMessage` variants to Telegraf's `sendMessage`/`sendPhoto`/`sendVideo`/`sendVoice`. Edits/deletes arrive as `EditEvent`/`DeleteEvent` and are appended to the raw log as new rows (§2.1) — never in-place mutation. Slash commands (`/start`, `/init`, …) are not registered as Telegraf commands — they arrive as ordinary text and are intercepted in the harness (§6).
 
 **Defaults to long-polling** (`bot.launch()`) — zero infrastructure for a single-user personal daemon: no public HTTPS endpoint, no reverse proxy, no TLS cert. Webhook mode remains available as an optional config path via Telegraf's own bundled `webhookCallback`, so it never requires adding a separate HTTP framework (Express/Fastify) to the project.
 

@@ -1,0 +1,5 @@
+{
+  "translateTime": "SYS:HH:MM:ss.l",
+  "singleLine": true,
+  "ignore": "pid,hostname"
+}

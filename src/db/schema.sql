@@ -64,6 +64,16 @@ CREATE TABLE pending_extraction (
   updated_at INTEGER NOT NULL
 );
 
+-- Adaptive /init interview state (keyed by chat_id). Goal lists are JSON arrays.
+CREATE TABLE init_interview (
+  chat_id TEXT PRIMARY KEY,
+  status TEXT NOT NULL CHECK (status IN ('idle', 'active', 'completed')),
+  turn_count INTEGER NOT NULL DEFAULT 0,
+  resolved_goals TEXT NOT NULL DEFAULT '[]', -- JSON array of goal ids
+  pending_goals TEXT NOT NULL DEFAULT '[]',  -- JSON array of goal ids
+  updated_at INTEGER NOT NULL
+);
+
 -- FTS5 over searchable text (raw log content + episode gists).
 -- Track C populates/queries this; Phase 0 only ensures it exists.
 CREATE VIRTUAL TABLE search_fts USING fts5(

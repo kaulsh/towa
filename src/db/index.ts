@@ -7,6 +7,7 @@ export {
 } from "./kysely.js";
 export type {
   ExtractionStatus,
+  InitInterviewStatus,
   RawLogRole,
   SqliteBoolean,
 } from "./types.js";

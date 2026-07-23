@@ -1,23 +1,39 @@
 # Towa Implementation Plan — Index
 
-Source: `docs/towa-design.md`. Run order: Phase 0 first (sequential, must merge to `main`), then Tracks A–D in any order relative to each other (fully parallel).
+Source: `docs/towa-design.md`.
+
+## Completed (on `main`)
 
 | Order | File | Goal | Depends on |
 |---|---|---|---|
-| 0 | [`00-foundation.md`](./00-foundation.md) | Project skeleton, SQLite schema/migrations, `LoadedChatModel`/`LoadedEmbeddingModel` and `ChannelAdapter` interface types | — |
-| A | [`track-a-model-providers.md`](./track-a-model-providers.md) | Loader factories: `loadOllama`, `loadLlamaCpp`, `loadLocalEmbeddings`, `loadOpenAICompatible`(+embeddings), context-window registry, token counting | Phase 0 |
-| B | [`track-b-channel-layer.md`](./track-b-channel-layer.md) | `TelegramAdapter` (Telegraf) implementing `ChannelAdapter` | Phase 0 |
-| C | [`track-c-retrieval-context.md`](./track-c-retrieval-context.md) | Forced retrieval pipeline (query-gen → multi-signal search → RRF → gate loop) + working-context/session-boundary assembly | Phase 0 |
-| D | [`track-d-write-path-kg.md`](./track-d-write-path-kg.md) | Async extraction drain worker: entity resolution, bitemporal KG writes, episode gists, capability-gated media handling | Phase 0 |
+| 0 | [`00-foundation.md`](./00-foundation.md) | Project skeleton, SQLite schema/migrations, model + channel interface types | — |
+| A | [`track-a-model-providers.md`](./track-a-model-providers.md) | Loader factories + context-window registry + token counting | Phase 0 |
+| B | [`track-b-channel-layer.md`](./track-b-channel-layer.md) | `TelegramAdapter` (Telegraf) | Phase 0 |
+| C | [`track-c-retrieval-context.md`](./track-c-retrieval-context.md) | Forced retrieval + context assembly | Phase 0 |
+| D | [`track-d-write-path-kg.md`](./track-d-write-path-kg.md) | Async extraction drain / KG / gists / media enrich-in-memory | Phase 0 |
+| E | [`track-e-harness.md`](./track-e-harness.md) | `createHarness` agent loop; slim example | A–D merged |
+
+## Next (this wave)
+
+| Order | File | Goal | Depends on | Parallel? |
+|---|---|---|---|---|
+| F | [`track-f-durable-media-text.md`](./track-f-durable-media-text.md) | Persist media transcripts/captions via append-only edits + edit-aware reads (§7.3) | Current `main` | Yes — with G |
+| G | [`track-g-evals-harness.md`](./track-g-evals-harness.md) | promptfoo + gold sets (§9.1); LongMemEval scaffold (§9.2) | Current `main` | Yes — with F |
+| H | [`track-h-query-time-media.md`](./track-h-query-time-media.md) | Best-effort query-time `fetchMedia` when durable caption insufficient (§7.3) | **F merged** | After F (parallel with G OK once F lands) |
+
+## Run order
+
+1. **F and G in parallel** (no Phase 0 — foundation already on `main`).
+2. **H after F** (needs durable text + edit-aware reads). H does not need G.
 
 ## Scope notes
 
-- Track A is scoped to four loaders only (Ollama, llama.cpp, local embeddings, OpenAI-compatible). `loadAnthropic` and `loadHuggingFaceInference` (design doc §8.2) are explicitly deferred — not part of any track's definition of done here.
-- Tracks A–D touch disjoint file trees (see each file's "File-level footprint" section) and depend only on Phase 0's merged interfaces/schema — none of them depend on another track's implementation.
-- No track in this plan is assigned to the planning session itself — every track, including Phase 0, is handed to a Cursor subagent.
+- No track in this plan is assigned to the planning session — all are handed to external coding agents.
+- Track G’s plan includes a long **Approach** section for human review of the eval method before/while implementing.
+- Query-time media was explicitly pulled into Track H (not deferred forever).
 
-## Coordination points (need a human decision before/while running)
+## Coordination points
 
-1. **Phase 0 must be confirmed merged to `main`** before the Track A–D prompt is run — the foundation prompt (below) should be run and completed first, standalone.
-2. `GenerateInput`/`GenerateOutput` shapes (referenced by `LoadedChatModel.generate()`) aren't spelled out field-by-field in the design doc — Phase 0 has latitude to define a minimal reasonable shape; Tracks A/C/D should treat whatever Phase 0 lands as authoritative rather than re-deriving it.
-3. If any track hits a real design question the doc doesn't answer, it should flag it rather than improvising a resolution silently, per `CLAUDE.md`'s "Workflow for coding agents" section — a few spots in the per-track files above call this out explicitly (e.g. debounce timer ownership in Track B, `EditEvent`/`DeleteEvent` field shapes in Phase 0).
+1. Media durability = `appendRawLogEdit` + edit-aware reads — never `UPDATE` `raw_log` (Track F).
+2. Evals do not wait on media write-back; fixtures seed `content` directly (Track G).
+3. If a design question is unanswered, flag it — don’t invent schema (`CLAUDE.md`).

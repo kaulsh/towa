@@ -1,0 +1,17 @@
+{
+  "configurations": [
+    {
+      "type": "node",
+      "request": "attach",
+      "name": "Attach to 11001",
+      "address": "127.0.0.1",
+      "port": 11001,
+      "timeout": 10000,
+      "sourceMaps": true,
+      "outFiles": [
+        "${workspaceFolder}/examples/telegram-daemon/dist/**/*.js",
+        "${workspaceFolder}/dist/**/*.js"
+      ]
+    }
+  ]
+}

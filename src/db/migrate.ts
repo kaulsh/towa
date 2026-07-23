@@ -1,6 +1,7 @@
 import type { Kysely } from "kysely";
 
 import { up as up001 } from "./migrations/001_initial.js";
+import { up as up002 } from "./migrations/002_init_interview.js";
 import type { Database } from "./types.js";
 
 export interface Migration {
@@ -12,6 +13,7 @@ export interface Migration {
 /** Ordered migration scripts. Append new entries; never reorder or renumber. */
 export const MIGRATIONS: readonly Migration[] = [
   { version: 1, name: "001_initial", up: up001 },
+  { version: 2, name: "002_init_interview", up: up002 },
 ];
 
 /**

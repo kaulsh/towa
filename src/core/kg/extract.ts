@@ -9,6 +9,7 @@ import {
 
 /**
  * Single LLM pass: within-episode coreference + proposed edges + gist (§4.2, §2.4).
+ * KG salience is fact-level: only durable personal facts (§2.3, §4).
  * Runs outside any SQLite write transaction.
  */
 export async function extractEpisodeKnowledge(
@@ -30,9 +31,13 @@ export async function extractEpisodeKnowledge(
         "Transcript:",
         transcript,
         "",
-        "Extract entities (coreference already resolved within this episode),",
-        "edges, and a one-sentence gist. Always produce a gist even if nothing",
-        "seems important.",
+        "Produce a one-sentence gist (always).",
+        "Extract entities and edges only for durable personal facts about the",
+        "user (identity, preferences, people/places they care about, plans,",
+        "durable attributes) — including prefs mentioned casually.",
+        "If the episode is greetings-only, agent meta, or general-knowledge /",
+        "encyclopedia Q&A with no personal durable content, return empty",
+        "entities and edges (gist still required).",
       ].join("\n"),
     },
   ];
@@ -48,7 +53,13 @@ function formatTranscript(turns: EpisodeTurn[]): string {
 
 const EXTRACTION_SYSTEM_PROMPT = `You extract a temporal knowledge graph and episode gist from a conversation episode.
 
-Rules:
+Salience (fact-level, not episode-level):
+- WRITE entities/edges for durable personal facts and preferences about the user — identity, likes/dislikes, people and places they care about, stated plans, lasting attributes — even when phrased casually or inside chitchat (e.g. "lol yeah I hate mornings").
+- DO NOT WRITE entities/edges for: greetings-only turns; agent meta ("I don't recall", capability talk, how the bot works); world knowledge / encyclopedia content from either side (bios, game trivia, general Q&A with no personal stake).
+- Empty entities and edges is correct when nothing personal is durable. Never invent facts.
+- Always produce a gist — one dense sentence usable as a retrieval handle — even when entities/edges are empty. Gist is never gated on importance.
+
+Mechanics:
 - Resolve within-episode coreference ("my sister" / "she" / "Anaya") into one entity mention.
 - Entity types and relation labels are free-form strings.
 - For each edge, set cardinality:
@@ -56,5 +67,4 @@ Rules:
   - "many" for additive facts (friendships, projects, preferences, …)
 - Set contradicts_existing=true only when the new single-valued fact clearly replaces a prior one stated in this episode or obviously supersedes prior knowledge you would expect. Prefer false when unsure.
 - object_mention_id XOR object_literal: use a mention id when the object is an entity; use object_literal for scalar values.
-- gist: exactly one dense sentence usable as a retrieval handle. Always required.
 - Output must match the JSON schema exactly.`;

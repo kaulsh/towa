@@ -22,6 +22,7 @@ import type {
   OutboundMessage,
   PresenceEvent,
 } from "../adapter.js";
+import { createTelegramApi } from "./api.js";
 import {
   isContentMessage,
   toEditEvent,
@@ -68,8 +69,8 @@ function base64ToInputFile(data: string): { source: Buffer } {
  * set) is owned entirely inside this module — callers only see normalized
  * callbacks.
  *
- * Inbound events are appended via Phase 0 `appendRawLog*` helpers. An
- * assistant `send()` closes the current episode and enqueues extraction.
+ * Outbound Bot API calls go through `createTelegramApi` (narrow retrying
+ * wrapper). Inbound transport stays on Telegraf.
  *
  * Design flags (not improvised here):
  * - Telegram Bot API does not deliver user-delete or typing/presence updates
@@ -85,6 +86,9 @@ export function createTelegramAdapter(
   config: TelegramAdapterConfig,
 ): ChannelAdapter {
   const bot = new Telegraf(config.botToken);
+  const api = createTelegramApi(bot.telegram, {
+    logger: log.child({ component: "telegram-api" }),
+  });
 
   const messageHandlers: Array<(msg: InboundMessage) => void> = [];
   const editHandlers: Array<(edit: EditEvent) => void> = [];
@@ -175,11 +179,11 @@ export function createTelegramAdapter(
         return;
       }
       // edited_message can be a service-shaped Message; require content shape.
-      if (!isContentMessage(message as Message)) {
+      if (!isContentMessage(message)) {
         return;
       }
 
-      const edit = toEditEvent(message as Message);
+      const edit = toEditEvent(message);
       try {
         await persistEdit(edit);
       } catch (err) {
@@ -195,38 +199,55 @@ export function createTelegramAdapter(
 
   const adapter: ChannelAdapter = {
     start(): void {
-      if (config.webhook) {
-        const { domain, port, path, host, secretToken } = config.webhook;
-        log.info(
-          { mode: "webhook", domain, port, path },
-          "starting Telegram bot",
-        );
-        void bot
-          .launch({
-            webhook: {
-              domain,
-              ...(port !== undefined ? { port } : {}),
-              ...(path !== undefined ? { path } : {}),
-              ...(host !== undefined ? { host } : {}),
-              ...(secretToken !== undefined ? { secretToken } : {}),
-            },
-          })
-          .catch((err) =>
-            log.error({ err, mode: "webhook" }, "Telegram bot launch failed"),
+      void (async () => {
+        try {
+          // Prefill botInfo via our retrying client so Telegraf's launch skips
+          // its own unretried getMe. deleteWebhook is similarly pre-cleared
+          // for polling; launch may call it again (idempotent).
+          bot.botInfo = await api.getMe();
+
+          if (config.webhook) {
+            const { domain, port, path, host, secretToken } = config.webhook;
+            log.info(
+              { mode: "webhook", domain, port, path },
+              "starting Telegram bot",
+            );
+            await bot.launch(
+              {
+                webhook: {
+                  domain,
+                  ...(port !== undefined ? { port } : {}),
+                  ...(path !== undefined ? { path } : {}),
+                  ...(host !== undefined ? { host } : {}),
+                  ...(secretToken !== undefined ? { secretToken } : {}),
+                },
+              },
+              () =>
+                log.info(
+                  { mode: "webhook" },
+                  "Telegram bot started — receiving updates",
+                ),
+            );
+            log.info({ mode: "webhook" }, "Telegram bot stopped");
+            return;
+          }
+
+          log.info(
+            { mode: "polling", chatId: config.chatId },
+            "starting Telegram bot (long polling)",
           );
-      } else {
-        // Long-polling — zero infrastructure (§7.2).
-        // `launch()`'s promise resolves when the bot stops, not when polling begins.
-        log.info(
-          { mode: "polling", chatId: config.chatId },
-          "starting Telegram bot (long polling)",
-        );
-        void bot
-          .launch()
-          .catch((err) =>
-            log.error({ err, mode: "polling" }, "Telegram bot launch failed"),
+          await api.deleteWebhook({});
+          await bot.launch({}, () =>
+            log.info(
+              { mode: "polling" },
+              "Telegram bot started — receiving updates",
+            ),
           );
-      }
+          log.info({ mode: "polling" }, "Telegram bot stopped");
+        } catch (err) {
+          log.error({ err }, "Telegram bot stopped with error");
+        }
+      })();
     },
 
     onMessage(handler: (msg: InboundMessage) => void): void {
@@ -255,17 +276,17 @@ export function createTelegramAdapter(
       let sent: Message;
       switch (message.type) {
         case "text":
-          sent = await bot.telegram.sendMessage(chatId, message.text);
+          sent = await api.sendMessage(chatId, message.text);
           break;
         case "image":
-          sent = await bot.telegram.sendPhoto(
+          sent = await api.sendPhoto(
             chatId,
             base64ToInputFile(message.data),
             message.caption !== undefined ? { caption: message.caption } : {},
           );
           break;
         case "video":
-          sent = await bot.telegram.sendVideo(
+          sent = await api.sendVideo(
             chatId,
             base64ToInputFile(message.data),
             message.caption !== undefined ? { caption: message.caption } : {},
@@ -273,7 +294,7 @@ export function createTelegramAdapter(
           break;
         case "audio":
           // §7.2 maps OutboundMessage audio → sendVoice.
-          sent = await bot.telegram.sendVoice(
+          sent = await api.sendVoice(
             chatId,
             base64ToInputFile(message.data),
             message.caption !== undefined ? { caption: message.caption } : {},
@@ -294,9 +315,7 @@ export function createTelegramAdapter(
       }
 
       const content =
-        message.type === "text"
-          ? message.text
-          : (message.caption ?? "");
+        message.type === "text" ? message.text : (message.caption ?? "");
 
       const assistantRawLogId = await appendRawLogMessage(db, {
         timestamp: sent.date,
@@ -314,7 +333,7 @@ export function createTelegramAdapter(
       ref: MediaRef,
     ): Promise<{ data: Buffer; mimeType: string }> {
       // Best-effort: Telegram file refs expire (§7.3). Let failures propagate.
-      const link = await bot.telegram.getFileLink(ref.platformFileId);
+      const link = await api.getFileLink(ref.platformFileId);
       const response = await fetch(link.href);
       if (!response.ok) {
         throw new Error(

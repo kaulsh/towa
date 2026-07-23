@@ -1,10 +1,7 @@
 import type { Kysely } from "kysely";
 import pino, { type Logger } from "pino";
 
-import type {
-  ChannelAdapter,
-  InboundMessage,
-} from "../../channels/adapter.js";
+import type { ChannelAdapter, InboundMessage } from "../../channels/adapter.js";
 import type { Database } from "../../db/types.js";
 import type {
   LoadedChatModel,
@@ -17,13 +14,20 @@ import {
   type DrainWorkerHandle,
 } from "../write-path/drain-worker.js";
 
+import { createBurstDebouncer, type BurstDebouncer } from "./debounce.js";
 import {
-  createBurstDebouncer,
-  type BurstDebouncer,
-} from "./debounce.js";
+  cancelInitInterview,
+  continueInitInterview,
+  loadInitInterviewState,
+  saveInitInterviewState,
+  startOrResumeInitInterview,
+} from "./init-interview.js";
+import { parseSlashCommand, START_HELP } from "./slash-commands.js";
 
-const DEFAULT_DEBOUNCE_IDLE_MS = 800;
-const DEFAULT_DEBOUNCE_MAX_WAIT_MS = 5000;
+/** Idle after last message before firing — long enough for a second thought. */
+const DEFAULT_DEBOUNCE_IDLE_MS = 2000;
+/** Cap from first message in a burst. */
+const DEFAULT_DEBOUNCE_MAX_WAIT_MS = 8000;
 
 export interface HarnessDebounceOptions {
   idleMs: number;
@@ -49,6 +53,11 @@ export interface Harness {
   start(): void;
   /** Stop drain + clear debounce. Does not assume `channel.stop()`. */
   stop(): Promise<void>;
+}
+
+interface PendingTurn {
+  chatId: string;
+  messages: InboundMessage[];
 }
 
 /**
@@ -81,6 +90,17 @@ function messageTextForGeneration(
   return base ? `${base}\n${note}` : note;
 }
 
+/** Join a debounced burst (and any late arrivals) into one generation input. */
+function joinBurstText(
+  messages: readonly InboundMessage[],
+  chatModel: LoadedChatModel,
+): string {
+  return messages
+    .map((m) => messageTextForGeneration(m, chatModel))
+    .filter((t) => t.length > 0)
+    .join("\n");
+}
+
 /**
  * Core agent loop factory (§6, §7.1, §13).
  * Talks only to `ChannelAdapter` — never imports a concrete channel.
@@ -107,39 +127,177 @@ export function createHarness(deps: CreateHarnessDeps): Harness {
   let debounce: BurstDebouncer | null = null;
 
   let busy = false;
-  const pending: InboundMessage[] = [];
+  /** Chat currently inside `handleTurn` (generation in flight). */
+  let inflightChatId: string | null = null;
+  const pending: PendingTurn[] = [];
+  /** Messages that arrived for `inflightChatId` after its turn started. */
+  const lateByChat = new Map<string, InboundMessage[]>();
 
-  async function handleTurn(msg: InboundMessage): Promise<void> {
-    const recentTurns = await loadRecentWorkingTurns(db);
-    const message = messageTextForGeneration(msg, chatModel);
+  function enqueueBurst(batched: InboundMessage[]): void {
+    if (batched.length === 0) return;
+    const chatId = batched[0]!.chatId;
 
+    // Still generating for this chat — fold into the in-flight turn before send.
+    if (busy && inflightChatId === chatId) {
+      const late = lateByChat.get(chatId) ?? [];
+      late.push(...batched);
+      lateByChat.set(chatId, late);
+      log.info(
+        { chatId, lateCount: late.length, added: batched.length },
+        "burst held as late arrivals for in-flight turn",
+      );
+      return;
+    }
+
+    // Merge into an already-queued turn for the same chat.
+    const last = pending[pending.length - 1];
+    if (last && last.chatId === chatId) {
+      last.messages.push(...batched);
+      log.info(
+        { chatId, burstSize: last.messages.length },
+        "merged burst into pending turn",
+      );
+      return;
+    }
+
+    pending.push({ chatId, messages: [...batched] });
+  }
+
+  /**
+   * Take late arrivals (if any) and return an extended message list.
+   * Caller regenerates when the list grows.
+   */
+  function takeLateArrivals(
+    chatId: string,
+    messages: InboundMessage[],
+  ): InboundMessage[] {
+    const late = lateByChat.get(chatId);
+    if (!late?.length) return messages;
+    lateByChat.delete(chatId);
     log.info(
-      { chatId: msg.chatId, contentPreview: message.slice(0, 80) },
-      "running forced retrieval pipeline",
+      { chatId, lateCount: late.length },
+      "folding late arrivals into turn — regenerating",
     );
+    return [...messages, ...late];
+  }
 
-    const result = await runRetrievalAndGenerate({
-      db,
-      chatModel,
-      embeddingModel,
-      message,
-      recentTurns,
-      systemPrompt,
-      sessionIdleThresholdSec,
-      logger: log.child({ component: "retrieval" }),
-    });
+  async function handleTurn(messages: InboundMessage[]): Promise<void> {
+    const chatId = messages[0]!.chatId;
+    let turnMessages = messages;
+
+    // Sole slash-command bursts stay command-shaped (not joined prose).
+    const sole = turnMessages.length === 1 ? turnMessages[0]! : null;
+    const soleSlash = sole ? parseSlashCommand(sole.content) : null;
+
+    if (soleSlash?.kind === "start") {
+      await channel.send(chatId, {
+        type: "text",
+        text: START_HELP,
+        recordInRawLog: false,
+      });
+      log.info({ chatId }, "sent /start help");
+      return;
+    }
+
+    if (soleSlash?.kind === "init_cancel") {
+      await cancelInitInterview(db, chatId);
+      await channel.send(chatId, {
+        type: "text",
+        text: "Init interview cancelled. Send /init anytime to start again.",
+        recordInRawLog: false,
+      });
+      log.info({ chatId }, "init interview cancelled");
+      return;
+    }
+
+    if (soleSlash?.kind === "init") {
+      log.info({ chatId }, "starting/resuming init interview");
+      const reply = await startOrResumeInitInterview({
+        db,
+        chatModel,
+        chatId,
+        logger: log.child({ component: "init-interview" }),
+      });
+      await channel.send(chatId, { type: "text", text: reply });
+      return;
+    }
+
+    const interview = await loadInitInterviewState(db, chatId);
+    if (interview.status === "active") {
+      log.info(
+        {
+          chatId,
+          turnCount: interview.turnCount,
+          burstSize: turnMessages.length,
+        },
+        "init interview answer turn",
+      );
+
+      // Snapshot so late-arrival regenerates don't double-count turn_count / goals.
+      const stateBefore = await loadInitInterviewState(db, chatId);
+      let reply = "";
+      let attempt = 0;
+      for (;;) {
+        if (attempt > 0) {
+          await saveInitInterviewState(db, stateBefore);
+        }
+        attempt += 1;
+        const answerText = joinBurstText(turnMessages, chatModel);
+        reply = await continueInitInterview({
+          db,
+          chatModel,
+          chatId,
+          userMessage: answerText,
+          logger: log.child({ component: "init-interview" }),
+        });
+        const next = takeLateArrivals(chatId, turnMessages);
+        if (next === turnMessages) break;
+        turnMessages = next;
+      }
+
+      await channel.send(chatId, { type: "text", text: reply });
+      return;
+    }
 
     log.info(
       {
-        roundsUsed: result.roundsUsed,
-        answerLen: result.answer.length,
-        answerPreview: result.answer.slice(0, 120),
+        chatId,
+        burstSize: turnMessages.length,
+        contentPreview: joinBurstText(turnMessages, chatModel).slice(0, 80),
+      },
+      "running forced retrieval pipeline",
+    );
+
+    let result: Awaited<ReturnType<typeof runRetrievalAndGenerate>> | undefined;
+    for (;;) {
+      const recentTurns = await loadRecentWorkingTurns(db);
+      const message = joinBurstText(turnMessages, chatModel);
+      result = await runRetrievalAndGenerate({
+        db,
+        chatModel,
+        embeddingModel,
+        message,
+        recentTurns,
+        systemPrompt,
+        sessionIdleThresholdSec,
+        logger: log.child({ component: "retrieval" }),
+      });
+      const next = takeLateArrivals(chatId, turnMessages);
+      if (next === turnMessages) break;
+      turnMessages = next;
+    }
+
+    log.info(
+      {
+        roundsUsed: result!.roundsUsed,
+        answerLen: result!.answer.length,
+        answerPreview: result!.answer.slice(0, 120),
       },
       "generation complete",
     );
 
-    await channel.send(msg.chatId, { type: "text", text: result.answer });
-    log.info({ chatId: msg.chatId }, "reply sent");
+    await channel.send(chatId, { type: "text", text: result!.answer });
+    log.info({ chatId }, "reply sent");
   }
 
   async function flushQueue(): Promise<void> {
@@ -147,15 +305,17 @@ export function createHarness(deps: CreateHarnessDeps): Harness {
     busy = true;
     try {
       while (pending.length > 0) {
-        const msg = pending.shift()!;
+        const turn = pending.shift()!;
+        inflightChatId = turn.chatId;
         try {
-          await handleTurn(msg);
+          await handleTurn(turn.messages);
         } catch (err) {
-          log.error({ err, chatId: msg.chatId }, "turn failed");
+          log.error({ err, chatId: turn.chatId }, "turn failed");
+          lateByChat.delete(turn.chatId);
           try {
             // Transport-only — must not enter raw_log / working context, or the
             // next turn can parrot the apology as a "successful" answer.
-            await channel.send(msg.chatId, {
+            await channel.send(turn.chatId, {
               type: "text",
               text: "Sorry — I hit an error generating a reply. Try again in a moment.",
               recordInRawLog: false,
@@ -163,6 +323,8 @@ export function createHarness(deps: CreateHarnessDeps): Harness {
           } catch (sendErr) {
             log.error({ err: sendErr }, "failed to send error notice");
           }
+        } finally {
+          inflightChatId = null;
         }
       }
     } finally {
@@ -194,14 +356,11 @@ export function createHarness(deps: CreateHarnessDeps): Harness {
       channel.onMessage((msg) => {
         log.info({ chatId: msg.chatId }, "inbound message");
         debounce!.schedule(msg.chatId, msg, (batched) => {
-          // Reply to the latest message in the burst; earlier ones are already
-          // in raw_log and will be part of working context / the closed episode.
-          const latest = batched[batched.length - 1]!;
           log.info(
-            { chatId: latest.chatId, burstSize: batched.length },
+            { chatId: batched[0]?.chatId, burstSize: batched.length },
             "debounce flushed — queuing turn",
           );
-          pending.push(latest);
+          enqueueBurst(batched);
           void flushQueue();
         });
       });

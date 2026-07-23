@@ -7,6 +7,8 @@ export type RawLogRole = "user" | "assistant";
 
 export type ExtractionStatus = "pending" | "in_progress" | "done";
 
+export type InitInterviewStatus = "idle" | "active" | "completed";
+
 /**
  * JSON columns are stored as TEXT. Callers serialize/deserialize;
  * Kysely sees the on-disk string form.
@@ -68,6 +70,18 @@ export interface SchemaVersionTable {
   applied_at: number;
 }
 
+/** Per-chat adaptive `/init` interview checklist (§6). */
+export interface InitInterviewTable {
+  chat_id: string;
+  status: InitInterviewStatus;
+  turn_count: number;
+  /** JSON array of fact goal ids. */
+  resolved_goals: string;
+  /** JSON array of fact goal ids. */
+  pending_goals: string;
+  updated_at: number;
+}
+
 /**
  * FTS5 virtual table — not queried via typed Kysely inserts in Phase 0;
  * included so the Database interface documents every table that exists.
@@ -87,5 +101,6 @@ export interface Database {
   kg_edges: KgEdgesTable;
   episode_gists: EpisodeGistsTable;
   pending_extraction: PendingExtractionTable;
+  init_interview: InitInterviewTable;
   search_fts: SearchFtsTable;
 }
