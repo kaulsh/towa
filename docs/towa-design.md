@@ -59,18 +59,23 @@ Append-only, one row per **individual Telegram message** (not per logical turn �
 
 ```
 raw_log
-  id              INTEGER PRIMARY KEY  -- monotonic
-  timestamp       INTEGER              -- unix epoch, message time
-  role            TEXT                 -- 'user' | 'assistant'
-  content         TEXT                 -- verbatim text (or transcript/caption for media — see §7.3)
-  source_meta     JSON                 -- platform message id, reply-to id, media ref, raw payload
-  edit_of         INTEGER NULL         -- FK to raw_log.id if this row is an edit event
-  deleted_marker  BOOLEAN DEFAULT FALSE
+  id                 INTEGER PRIMARY KEY  -- monotonic
+  timestamp          INTEGER              -- unix epoch, message time
+  role               TEXT                 -- 'user' | 'assistant'
+  content            TEXT                 -- verbatim text (or transcript/caption for media — see §7.3)
+  chat_id            TEXT NULL            -- platform chat id (stringified)
+  message_id         TEXT NULL            -- platform message id (stringified); edit lookup key with chat_id
+  media_file_id      TEXT NULL            -- durable platform file id (no bytes)
+  media_mime_type    TEXT NULL
+  media_kind         TEXT NULL            -- 'image' | 'audio' | 'video' | 'file'
+  is_media_artifact  BOOLEAN DEFAULT FALSE -- system transcript/caption edit tip (§7.3)
+  edit_of            INTEGER NULL         -- FK to raw_log.id if this row is an edit event
+  deleted_marker     BOOLEAN DEFAULT FALSE
 ```
 
 Edits and deletes **never mutate a row in place** — they append a new row referencing the original (`edit_of`), or a delete-marker row. The raw log is a strict transcript of everything that ever crossed the wire.
 
-**Read resolution:** verbatim turn loaders (working context, retrieved episodes, extraction) resolve each original id to the **latest non-deleted tip** targeting it via `edit_of` — including system `media_artifact` edits whose new ids fall outside the episode's `[start_msg_id, end_msg_id]` (enrichment runs after the episode closes; see §7.3). Edit rows are never listed as additional turns; the original id is preserved for episode identity and provenance.
+**Read resolution:** verbatim turn loaders (working context, retrieved episodes, extraction) resolve each original id to the **latest non-deleted tip** targeting it via `edit_of` — including system media-artifact edits (`is_media_artifact`) whose new ids fall outside the episode's `[start_msg_id, end_msg_id]` (enrichment runs after the episode closes; see §7.3). Edit rows are never listed as additional turns; the original id is preserved for episode identity and provenance. Platform edit lookup uses `(chat_id, message_id)` columns — not JSON digging.
 
 ### 2.2 Episodes (derived)
 
@@ -174,7 +179,7 @@ pending_extraction
 ```
 
 - Foreground (channel handler): on episode close, `INSERT INTO pending_extraction ... status='pending'` — a sub-millisecond transaction.
-- Background (drain loop, runs as an async worker inside the same daemon process — no separate OS process needed): polls for `pending`, marks `in_progress`, does the slow work **outside any transaction**, then commits results (KG writes + gist) and marks `done` in one short final transaction.
+- Background (drain loop, owned by the daemon process — no separate OS process): repeatedly calls the daemon's `processNextExtraction` tick, which claims at most one `pending`/`in_progress` episode via core queue helpers (`listResumableExtractions`), then calls core's `runExtraction` (marks `in_progress`, does the slow work **outside any transaction**, commits KG writes + gist and marks `done` in one short final transaction). Core exports the KG/queue primitives only; the daemon owns the tick, scheduling, idle sleep, and shutdown.
 - SQLite's "one writer" constraint is per-instant, not per-process — any number of connections may *issue* writes; conflicting ones just serialize. Because both transactions here are short and rarely overlap, contention is a non-issue with `busy_timeout` set.
 - Crash recovery: on restart, re-scan for `pending`/`in_progress` rows and resume. Nothing is lost — episodes are idempotently re-extractable from the raw log.
 
@@ -276,69 +281,100 @@ Per turn: `system prompt + working-context buffer + retrieved memory (§5) + new
 
 **Session boundary:** an idle gap beyond a threshold (e.g. >2 hours) resets the working-context buffer rather than letting it slide continuously. The first message of a new session naturally triggers retrieval to pull back whatever's relevant; carrying yesterday's tail forward is dead weight.
 
-**Burst debounce (runtime, ephemeral, distinct from the stored episode boundary in §2.2):** after a message arrives, wait for a short idle gap (extended by further messages or a Telegram `typing` signal) before generating a reply, with a max cap so a long monologue still gets a response. The harness joins every message in the fired burst into one generation input (not only the latest). Messages that arrive for the same chat while a turn is already in flight are folded into that turn — regenerating once before send — rather than becoming a second reply. This state is never persisted — once a reply has been sent, the episode boundary is recoverable from the log alone.
+**Burst debounce (runtime, ephemeral, distinct from the stored episode boundary in §2.2):** after a message arrives, wait for a short idle gap (extended by further messages) before generating a reply, with a max cap so a long monologue still gets a response. The harness joins every message in the fired burst into one generation input (not only the latest). Messages that arrive for the same chat while a turn is already in flight are folded into that turn — regenerating once before deliver — rather than becoming a second reply. This state is never persisted — once a reply has been delivered and recorded, the episode boundary is recoverable from the log alone. (Telegram Bot API does not deliver private-chat typing/presence to bots, so debounce is message-driven only.)
 
-**Slash-command intercept (harness-local, before retrieval):** leading `/` commands are parsed as plain text in the agent loop — not via channel-specific command APIs (e.g. Telegraf `bot.command`). `/start` returns a short help blurb (wire-only; not recorded in `raw_log`). `/init` starts or resumes a short adaptive fact-goal interview (structured interviewer LLM; soft target ~10 turns, hard cap 15) that skips the forced-retrieval pipeline while active; `/init cancel` stops asking without wiping already-resolved goals. Interview replies use the normal send path so they enter durable memory; extraction still runs asynchronously as usual.
+**Outbound delivery surface:** the harness does **not** send on the wire. Each completed logical turn notifies `onTurnCompleted` listeners with a `TurnResult` (`{ chatId, outbound }`). The daemon sends via `telegram.send` in that callback. Async handlers are **awaited** before the next queued turn starts — delivery backpressure lives here, not in `handleTurn`. Error apologies, `/start` help, and similar transport-only notices are included in `TurnResult.outbound` with `recordInRawLog: false`; the harness decides durability flags and never calls transport itself.
+
+**Slash-command intercept (harness-local, before retrieval):** leading `/` commands are parsed as plain text in the agent loop — not via channel-specific command APIs (e.g. Telegraf `bot.command`). `/start` returns a short help blurb (wire-only; not recorded in `raw_log`). `/init` starts or resumes a short adaptive fact-goal interview (structured interviewer LLM; soft target ~10 turns, hard cap 15) that skips the forced-retrieval pipeline while active; `/init cancel` stops asking without wiping already-resolved goals. Interview replies go through the normal `onTurnCompleted` → `telegram.send` path so they enter durable memory; extraction still runs asynchronously as usual.
 
 ---
 
-## 7. Channel Layer
+## 7. Telegram + Harness Wiring
 
-### 7.1 Pluggable adapter interface
+Towa is **Telegram-native**. There is no pluggable `ChannelAdapter` and no dual-DTO translation layer between a generic channel port and Telegram. Shared message shapes (`InboundMessage`, `OutboundMessage`, `MediaRef`, `TurnResult`, …) use generic names so the harness and Telegram module can share them directly; Telegram-specific types (Telegraf `Message`, bot config) stay in the Telegram module. A future second surface (if ever) would call the same harness methods — not implement a channel-adapter interface.
 
-Telegram is the only implementation for v1, but the interface should not assume it — same shape should express Slack, WhatsApp, etc. later without rework. `source_meta` on the raw log row is already generic enough to carry any platform's native payload, so the abstraction work is entirely in ingestion; the data model never needs to know which channel a message came from.
+### 7.1 Programmatic harness + Telegram runtime
+
+The harness and Telegram runtime are created **separately**. The harness is a programmatic agent controller: it does **not** register bot callbacks, own Telegraf, inject `send`, or start an extraction poll loop. The **daemon** owns bot callback registration, `processNextExtraction` (composing core's `runExtraction` + queue helpers with db + models only — no media port), the extraction poll loop, and outbound sending. Core stays library-like: no long-running process starters.
 
 ```typescript
-interface ChannelAdapter {
-  start(): void;
-  onMessage(handler: (msg: InboundMessage) => void): void;
-  onEdit(handler: (edit: EditEvent) => void): void;
-  onDelete(handler: (del: DeleteEvent) => void): void;
-  onPresence?(handler: (p: PresenceEvent) => void): void;   // optional, widens debounce
+// Shared shapes (generic names; used by harness + Telegram)
+type MediaKind = 'image' | 'audio' | 'video' | 'file';
 
-  send(chatId: string, message: OutboundMessage): Promise<string>;  // returns platform message id
-  fetchMedia(ref: MediaRef): Promise<{ data: Buffer; mimeType: string }>;
+interface MediaRef {
+  fileId: string;
+  mimeType: string;
+  kind: MediaKind;
+  data?: string;             // ephemeral base64 — never written to raw_log
 }
 
 interface InboundMessage {
   chatId: string;
+  messageId: string;         // platform message id
   role: 'user';
   content: string;
   timestamp: number;
-  mediaRef?: MediaRef;
-  raw: unknown;              // dumped straight into source_meta
+  media?: MediaRef;          // may include ephemeral base64 `data` for harness
 }
 
 type OutboundMessage =
-  | { type: 'text'; text: string; recordInRawLog?: boolean }  // false = wire-only notice (no raw_log / episode close)
-  | { type: 'image'; caption?: string; data: string; mimeType: string }  // base64
-  | { type: 'video'; caption?: string; data: string; mimeType: string }  // base64
-  | { type: 'audio'; caption?: string; data: string; mimeType: string }; // base64
+  | { type: 'text'; text: string; recordInRawLog?: boolean }  // false = wire-only notice
+  | { type: 'image'; caption?: string; data: string; mimeType: string }
+  | { type: 'video'; caption?: string; data: string; mimeType: string }
+  | { type: 'audio'; caption?: string; data: string; mimeType: string };
 
-interface MediaRef {
-  platformFileId: string;
-  mimeType: string;
-  kind: 'image' | 'video' | 'audio' | 'file';
+interface TurnResult {
+  chatId: string;
+  outbound: OutboundMessage[];
 }
+
+type SendOutbound = (chatId: string, message: OutboundMessage) => Promise<string>;
+
+interface Harness {
+  start(): void;             // debounce only — not Telegram, not drain
+  stop(): Promise<void>;
+  /** Accept into debounce/queue; resolves promptly (does not wait for generation). */
+  handleTurn(msg: InboundMessage): Promise<void>;
+  onTurnCompleted(handler: (result: TurnResult) => void | Promise<void>): () => void;
+}
+
+// Daemon wiring (sketch):
+const telegram = createTelegram(db, { botToken, chatId });
+const harness = createHarness({ db, chatModel, embeddingModel, … });
+
+harness.onTurnCompleted(async (result) => {
+  for (const out of result.outbound) {
+    await telegram.send(result.chatId, out);
+  }
+});
+
+// Daemon owns processNextExtraction + the poll loop; core exports runExtraction / queue helpers.
+startExtractionDrainLoop({ db, chatModel, embeddingModel, … });
+
+harness.start();
+telegram.start((msg) => harness.handleTurn(msg));
 ```
 
-The core agent loop only ever talks to `ChannelAdapter` — it has no knowledge that Telegram exists. "Single eternal chat" is a config value (one allow-listed `chatId`) on the adapter, not special-cased logic.
+**Inbound:** Telegram owns transport + inbound raw_log append. Before calling the daemon's inbound callback, it downloads media (`file_id` → base64 on `media.data` and into a process-local media-byte cache keyed by `fileId`) and writes durable media columns (`media_file_id` / `media_mime_type` / `media_kind`) plus `chat_id` / `message_id` — no opaque `source_meta` blob. Telegram Message → `MediaRef` mapping uses typed Telegraf field checks under `src/telegram/`. The daemon then calls `harness.handleTurn(msg)`. **Outbound:** the harness builds `TurnResult.outbound` and notifies `onTurnCompleted`; the daemon calls `telegram.send`, which maps `OutboundMessage` to Bot API helpers and, when recording, appends the assistant row and closes the episode (§2.2 / §4). **Drain:** daemon-owned poll loop calls local `processNextExtraction({ db, chatModel, embeddingModel })`, which uses core's `listResumableExtractions` + `runExtraction` — no `fetchMedia` injection. Enrichment reads the process-local cache; cache miss → text note only (no Telegram re-fetch). `fetchMedia` is **not** exposed on `TelegramRuntime`.
 
-**Transport mode is owned entirely by the adapter, internally.** `start()` is deliberately opaque about *how* it begins receiving events — polling, webhook, or websocket. The core harness never inspects or depends on which transport a given adapter uses; it only ever sees the normalized event callbacks. This has to be per-adapter rather than a shared harness-level setting, because the channels this interface is meant to eventually support genuinely differ in idiomatic transport: Telegram supports both polling and webhooks cleanly, Slack's idiomatic path is a websocket (Socket Mode), WhatsApp Business API is webhook-only. A cross-channel "transport mode" concept would be a false abstraction over things that aren't actually the same shape.
+**"Single eternal chat"** is a config value (one allow-listed `chatId`) on the Telegram runtime.
 
-### 7.2 `TelegramAdapter`
+**Transport mode** (long-polling vs webhook) is owned entirely inside the Telegram module. The harness never inspects how updates arrive.
 
-Sole v1 implementation, built on **Telegraf** (§13). Translates Telegram Bot API events into the normalized shapes above; maps `OutboundMessage` variants to Telegraf's `sendMessage`/`sendPhoto`/`sendVideo`/`sendVoice`. Edits/deletes arrive as `EditEvent`/`DeleteEvent` and are appended to the raw log as new rows (§2.1) — never in-place mutation. Slash commands (`/start`, `/init`, …) are not registered as Telegraf commands — they arrive as ordinary text and are intercepted in the harness (§6).
+### 7.2 Telegram runtime (`createTelegram`)
 
-**Defaults to long-polling** (`bot.launch()`) — zero infrastructure for a single-user personal daemon: no public HTTPS endpoint, no reverse proxy, no TLS cert. Webhook mode remains available as an optional config path via Telegraf's own bundled `webhookCallback`, so it never requires adding a separate HTTP framework (Express/Fastify) to the project.
+Built on **Telegraf** (§13). Normalizes Bot API events into the shared shapes above; maps `OutboundMessage` variants to `sendMessage` / `sendPhoto` / `sendVideo` / `sendVoice`. Platform message edits are **not** wired yet (no `edited_message` handler); when added, they must append via `appendRawLogEdit` (§2.1) — never in-place mutation. Slash commands (`/start`, `/init`, …) are not registered as Telegraf commands — they arrive as ordinary text and are intercepted in the harness (§6). `start(inbound)` takes a single inbound callback — the daemon wires `telegram.start((msg) => harness.handleTurn(msg))`; there is no `telegram.start(harness)` and no multi-handler bag.
+
+**Defaults to long-polling** (`bot.launch()`) — zero infrastructure for a single-user personal daemon. Webhook mode remains available as an optional config path via Telegraf's own bundled `webhookCallback`, so it never requires adding a separate HTTP framework.
 
 ### 7.3 Media policy
 
-**The raw log never stores media bytes — only a reference (`MediaRef`) plus, once available, a text-derived artifact.**
+**The raw log never stores media bytes — only durable columns (`media_file_id` / `media_mime_type` / `media_kind`) plus, once available, a text-derived artifact.** Extraction loads an `EpisodeTurn` with first-class `media?: MediaRef` and `messageId` mapped from those columns — it does not scrape JSON.
 
-- At extraction time (§4), if an episode contains voice or image media, the worker calls `fetchMedia(ref)` and checks the active chat model's capabilities (§8.1): if `capabilities.audioInput` (for voice) or `capabilities.vision` (for images) is true, the raw bytes are passed directly into a multimodal `generate()` call to produce a transcript/description. There is no separate transcription library or pipeline — transcription and captioning are both just capability-gated multimodal generation. If the active model lacks the relevant capability, extraction degrades gracefully to recording that media of that kind existed, without content.
-- The text artifact is written back with `appendRawLogEdit` (`source_meta.kind = "media_artifact"`) so FTS and edit-aware readers (§2.1) see it; the original row is never mutated.
-- **Decision: transcripts/captions are eternal; raw media bytes are best-effort/ephemeral.** Platform file references (e.g. Telegram file IDs) typically expire, so the binary is not guaranteed retrievable months or years later — only its text-derived description is treated as durable memory. `fetchMedia` may also be called on-demand at query time if a retrieved episode's caption is insufficient to answer a question and the reference hasn't expired yet — an optional, best-effort path, not part of the durable guarantee.
+- On the inbound path, Telegram resolves `file_id` → base64 and attaches it to the in-memory `InboundMessage.media.data` before `handleTurn`, and seeds a **process-local media-byte cache** (keyed by `fileId`) for later drain enrichment. That payload is never written to SQLite (only durable `MediaRef` fields land in columns). Outbound `send` of binary media also seeds the cache from bytes already held.
+- At extraction time (§4), if an episode turn has `media`, enrichment prefers any in-memory `MediaRef.data`, else the process-local cache. **Cache miss → no Telegram call** — degrade to a text note that media existed. When bytes are available, checks the active chat model's capabilities (§8.1): if `capabilities.audioInput` (for voice) or `capabilities.vision` (for images) is true, the raw bytes are passed directly into a multimodal `generate()` call to produce a transcript/description. There is no separate transcription library or pipeline — transcription and captioning are both just capability-gated multimodal generation. If the active model lacks the relevant capability, extraction degrades gracefully to recording that media of that kind existed, without content.
+- The text artifact is written back with `appendRawLogEdit` (`is_media_artifact = 1`) so FTS and edit-aware readers (§2.1) see it; the original row is never mutated.
+- **Decision: transcripts/captions are eternal; raw media bytes are best-effort/ephemeral.** Platform file references (e.g. Telegram file IDs) typically expire, so the binary is not guaranteed retrievable months or years later — only its text-derived description is treated as durable memory. A future optional query-time re-download (when a retrieved caption is insufficient and the platform ref has not expired) is deferred — not part of the durable guarantee, and not exposed as a public `fetchMedia` on the Telegram runtime.
 
 ---
 
@@ -470,34 +506,33 @@ Recorded so the reasoning isn't lost and isn't accidentally re-litigated without
 - **Dedicated graph database (Neo4j, Apache AGE):** rejected. The performance case for a graph engine doesn't exist at single-user scale (tens of thousands of edges, sub-ms CTE traversal), and it would add an operational dependency the single-file/single-process durability model is specifically designed to avoid.
 - **Synchronous (inline) extraction:** rejected — would stall every reply behind a multi-second LLM call. Async is safe because the raw log and working-context buffer already cover the read-your-writes gap for recently-stated facts.
 - **Embedding cache layer:** considered and rejected — unnecessary storage/complexity overhead at this scale; `embed()` is called directly against the loaded model (local or remote) with no caching indirection.
+- **Pluggable `ChannelAdapter` / multi-channel abstraction:** rejected for v1. Towa is Telegram-native; a generic adapter with `onMessage` registration inverted control the wrong way (harness owning channel callbacks) and invited a dual-DTO glue layer. Revisit only if a second surface is actually built — it should call harness methods (`handleTurn` / `onTurnCompleted`), not resurrect an adapter interface or inject transport into the harness.
 
 ---
 
 ## 12. Suggested Repo Layout
 
-Left to the coding agent to execute against, sketched here only as a starting scaffold:
-
 ```
 towa/
-  src/
-    core/
-      raw-log/            # append-only writer, edit/delete handling
-      episodes/            # boundary derivation
-      kg/                  # nodes, edges, bitemporal logic, entity resolution
-      gist/                
-      retrieval/            # query-gen, multi-signal search, RRF, gate loop
-      context-assembly/    # working-context window, session boundaries
-      write-path/          # pending_extraction queue + drain worker
-      harness/              # agent loop: debounce → retrieval → reply + drain start
-    channels/
-      adapter.ts            # ChannelAdapter interface + shared types
-      telegram/
-    models/
-      loaders/               # loadOllama, loadLlamaCpp, loadOpenAICompatible, etc.
-      types.ts               # LoadedChatModel / LoadedEmbeddingModel
-    db/
-      schema.sql
-      migrations/
+  packages/
+    core/                   # @towa/core — library
+      src/
+        raw-log/            # append-only writer, edit/delete handling
+        episodes/           # boundary derivation (shared with Telegram write path)
+        extraction/         # KG nodes/edges, entity resolution, gist write, pending_extraction queue, runExtraction
+        retrieval/          # query-gen, multi-signal search, RRF, gate loop
+        context-assembly/   # working-context window, session boundaries
+        harness/            # programmatic agent loop (handleTurn, onTurnCompleted, …)
+        media-byte-cache.ts # process-local media bytes (inbound download → enrichment)
+        telegram/           # Telegraf runtime: createTelegram → daemon handlers
+        messages.ts         # shared InboundMessage / OutboundMessage / MediaRef / TurnResult
+        ai/
+          loaders/          # loadOllama, loadLlamaCpp, loadOpenAICompatible, etc.
+          types.ts          # LoadedChatModel / LoadedEmbeddingModel
+        db/
+          migrations/
+    daemon/                 # @towa/daemon — Telegram daemon + stub `towa` CLI bin
+                            # owns processNextExtraction tick + drain loop (composes core extraction/queue)
   evals/
     gold-sets/
     promptfoo/
@@ -514,9 +549,9 @@ Storage engines and model providers are covered in §3 and §8. This section cov
 | Concern | Library | Notes |
 |---|---|---|
 | SQL query building | **Kysely** | Type-safe query builder over `better-sqlite3` (§3). Chosen over a full ORM (Prisma, Drizzle relational mode) specifically because the design requires two things ORMs tend to fight or can't express: recursive CTEs for graph traversal (§5.2) and `sqlite-vec`'s custom virtual-table functions (`vec_distance_cosine`, etc.). Kysely's raw-fragment escape hatch handles both while keeping everything else type-safe. |
-| Telegram integration | **Telegraf** | Implements `TelegramAdapter` (§7.2). Defaults to long-polling (`bot.launch()`) — zero infrastructure for a single-user daemon. Webhook mode is available via Telegraf's own bundled `webhookCallback`, so no separate HTTP framework is needed even then. |
+| Telegram integration | **Telegraf** | Powers `createTelegram` (§7.2). Defaults to long-polling (`bot.launch()`) — zero infrastructure for a single-user daemon. Webhook mode is available via Telegraf's own bundled `webhookCallback`, so no separate HTTP framework is needed even then. |
 | Structured-output validation | **Zod** | Validates every forced-pipeline structured output (query-gen, sufficiency gate, entity-resolution verification — §5.1, §4.3) after the JSON-parse fallback (§8.1). A malformed response from a less-capable local model fails loudly instead of silently corrupting state. |
-| Logging | **Pino** | Structured info/debug/error logging throughout the daemon — write-path drain loop, retrieval pipeline stage counts, channel adapter message in/out, debounce firing. Low overhead, fits an always-on process. |
+| Logging | **Pino** | Structured info/debug/error logging throughout the daemon — write-path drain loop, retrieval pipeline stage counts, Telegram message in/out, debounce firing. Low overhead, fits an always-on process. |
 | Config / secrets | `process.env` (+ optional `dotenv` for local dev) | No config framework. Towa is invoked directly as `node entrypoint/main.js`; configuration is environment variables plus code that imports the harness. CLI packaging is out of scope for now, to be explored once the harness itself is fleshed out. |
 | Token counting | Per-loader — `node-llama-cpp`'s tokenizer, provider SDKs, bundled estimator fallback | See §8.3 for the full breakdown by loader. |
 | Testing | Evals only — promptfoo + Langfuse (§9) | See §9.3. |

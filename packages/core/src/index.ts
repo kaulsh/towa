@@ -2,20 +2,23 @@
  * Public library surface for `@towa/core` (§13).
  *
  * Typical daemon consumer:
- *   openDatabase → load* models → createTelegramAdapter (from `@towa/telegram`)
- *   → createHarness(...).start()
+ *   openDatabase → load* models → createTelegram → createHarness({ db, models, … })
+ *   → harness.onTurnCompleted(send via telegram) → daemon poll loop
+ *     (processNextExtraction → runExtraction / queue helpers)
+ *   → harness.start() → telegram.start((msg) => harness.handleTurn(msg))
  *
- * Also exported: ChannelAdapter + model interface types for custom adapters/loaders,
- * plus a few write-path helpers the Telegram adapter currently needs.
- * Internal planes (retrieval, KG, drain, debounce) are not part of this API.
+ * Core is library-like: no long-running poll/worker starters. The daemon owns
+ * `processNextExtraction` (the tick) and the drain loop; core exports extraction/queue
+ * primitives (`runExtraction`, `listResumableExtractions`, …) that the tick composes.
+ *
+ * Also exported: message types + model interfaces for custom loaders,
+ * plus episode/raw-log helpers used by the Telegram runtime / daemon.
+ * Internal planes (retrieval, entity resolution internals, debounce) are not
+ * part of this API.
  */
 
 // Database
-export {
-  openDatabase,
-  type Database,
-  type OpenDatabaseOptions,
-} from "./db/index.js";
+export * from "./db/index.js";
 
 // Models — loaders + the interfaces they satisfy (for custom loaders too)
 export type {
@@ -30,7 +33,7 @@ export type {
   LoadedEmbeddingModel,
   MessagePart,
   TextPart,
-} from "./models/types.js";
+} from "./ai/types.js";
 export {
   loadOllama,
   loadLlamaCpp,
@@ -42,34 +45,58 @@ export {
   type LocalEmbeddingsConfig,
   type OpenAICompatibleConfig,
   type OpenAICompatibleEmbeddingsConfig,
-} from "./models/loaders/index.js";
+} from "./ai/loaders/index.js";
 
-// Channel interface — adapters live in separate packages (e.g. `@towa/telegram`)
+// Shared message shapes (send lives on Telegram; media bytes via process cache)
 export type {
-  ChannelAdapter,
   DeleteEvent,
-  EditEvent,
   InboundMessage,
+  MediaKind,
   MediaRef,
   OutboundMessage,
-  PresenceEvent,
-} from "./channels/adapter.js";
+  SendOutbound,
+  TurnResult,
+} from "./messages.js";
+export { durableMediaRef, isMediaKind } from "./messages.js";
 
-// Write-path helpers used by channel adapters (Telegram today)
-export {
-  appendRawLogEdit,
-  appendRawLogMessage,
-} from "./core/raw-log/index.js";
-export {
-  closeEpisode,
-  deriveEpisodeBoundary,
-} from "./core/episodes/index.js";
-export { enqueuePendingExtraction } from "./core/write-path/queue.js";
+// Raw-log / episode helpers used by Telegram outbound durability
+export { appendRawLogEdit, appendRawLogMessage } from "./raw-log/index.js";
+export { closeEpisode, deriveEpisodeBoundary } from "./episodes/index.js";
 
-// Harness — primary runtime entry (§6)
+// Extraction + pending_extraction queue primitives (daemon tick composes these)
+export {
+  runExtraction,
+  type RunExtractionDeps,
+  enqueuePendingExtraction,
+  listPendingExtractions,
+  listResumableExtractions,
+  getExtractionStatus,
+  markExtractionInProgress,
+  markExtractionDone,
+  type PendingExtractionRow,
+} from "./extraction/index.js";
+
+// Harness — programmatic agent controller (§6)
 export {
   createHarness,
   type CreateHarnessDeps,
   type Harness,
   type HarnessDebounceOptions,
-} from "./core/harness/index.js";
+  type TurnCompletedHandler,
+} from "./harness/index.js";
+
+// Telegram runtime — Telegraf wiring; daemon registers inbound (§7)
+export {
+  Telegram,
+  createTelegramApi,
+  isTransientTelegramApiError,
+  withTransientRetry,
+  type CreateTelegramApiOptions,
+  type TelegramApi,
+  type TelegramConfig,
+  type TelegramInboundHandler,
+  type TelegramRuntime,
+  type TelegramUpload,
+  type TelegramWebhookConfig,
+  type TransientRetryOptions,
+} from "./telegram/index.js";

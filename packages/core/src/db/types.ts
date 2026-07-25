@@ -1,5 +1,7 @@
 import type { ColumnType, Generated } from "kysely";
 
+import type { MediaKind } from "../messages.js";
+
 /** SQLite stores booleans as 0/1 integers. */
 export type SqliteBoolean = 0 | 1;
 
@@ -18,7 +20,15 @@ export interface RawLogTable {
   timestamp: number;
   role: RawLogRole;
   content: string;
-  source_meta: string;
+  /** Platform chat id (e.g. Telegram chat.id as string). */
+  chat_id: string | null;
+  /** Platform message id (e.g. Telegram message_id as string). */
+  message_id: string | null;
+  media_file_id: string | null;
+  media_mime_type: string | null;
+  media_kind: MediaKind | null;
+  /** 1 when this edit row is a system transcript/caption artifact (§7.3). */
+  is_media_artifact: SqliteBoolean;
   edit_of: number | null;
   deleted_marker: SqliteBoolean;
 }
@@ -70,7 +80,7 @@ export interface SchemaVersionTable {
   applied_at: number;
 }
 
-/** Per-chat adaptive `/init` interview checklist (§6). */
+/** Per-chat adaptive `/init` interview state (§6). */
 export interface InitInterviewTable {
   chat_id: string;
   status: InitInterviewStatus;

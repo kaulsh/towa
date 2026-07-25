@@ -21,7 +21,7 @@ export interface OpenDatabaseOptions {
  * then run ordered migrations. This is the single entry point every track uses
  * to obtain a typed Kysely instance.
  */
-export async function openDatabase(
+export async function Sqlite(
   options: OpenDatabaseOptions,
 ): Promise<Kysely<Database>> {
   const sqlite = new DatabaseConstructor(options.path);

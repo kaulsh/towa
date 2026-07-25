@@ -17,10 +17,22 @@ CREATE TABLE raw_log (
   timestamp INTEGER NOT NULL,
   role TEXT NOT NULL CHECK (role IN ('user', 'assistant')),
   content TEXT NOT NULL,
-  source_meta TEXT NOT NULL, -- JSON
+  chat_id TEXT NULL,
+  message_id TEXT NULL,
+  media_file_id TEXT NULL,
+  media_mime_type TEXT NULL,
+  media_kind TEXT NULL CHECK (
+    media_kind IS NULL
+    OR media_kind IN ('image', 'audio', 'video', 'file')
+  ),
+  is_media_artifact INTEGER NOT NULL DEFAULT 0 CHECK (is_media_artifact IN (0, 1)),
   edit_of INTEGER NULL REFERENCES raw_log(id),
   deleted_marker INTEGER NOT NULL DEFAULT 0 CHECK (deleted_marker IN (0, 1))
 );
+
+CREATE INDEX raw_log_chat_message
+  ON raw_log (chat_id, message_id)
+  WHERE edit_of IS NULL AND deleted_marker = 0;
 
 CREATE TABLE episodes (
   id INTEGER PRIMARY KEY,

@@ -2,6 +2,7 @@ import type { Kysely } from "kysely";
 
 import { up as up001 } from "./migrations/001_initial.js";
 import { up as up002 } from "./migrations/002_init_interview.js";
+import { up as up003 } from "./migrations/003_raw_log_media_columns.js";
 import type { Database } from "./types.js";
 
 export interface Migration {
@@ -14,6 +15,7 @@ export interface Migration {
 export const MIGRATIONS: readonly Migration[] = [
   { version: 1, name: "001_initial", up: up001 },
   { version: 2, name: "002_init_interview", up: up002 },
+  { version: 3, name: "003_raw_log_media_columns", up: up003 },
 ];
 
 /**

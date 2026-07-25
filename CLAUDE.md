@@ -32,14 +32,15 @@ These are correctness/thesis-preserving rules. Do not "helpfully" optimize aroun
 
 - **Raw log is append-only.** Never `UPDATE` or `DELETE` a `raw_log` row. Edits and deletes are new appended rows referencing the original. (§2.1)
 - **`valid_to` always uses the far-future sentinel for open edges — never `NULL`.** Every temporal query must be a uniform `valid_from <= now AND now < valid_to`. (§2.3)
-- **No LLM call runs inside an open SQLite write transaction.** Compute extraction results first, then open a short transaction just to commit them. (§4.2)
+- **No LLM call runs inside an open SQLite write transaction.** Compute extraction results first, then open a short transaction just to commit them. Holds inside daemon `processNextExtraction` / core `runExtraction` (§4.2).
 - **Retrieval is a forced pipeline, not an optional tool call.** Query-gen → multi-signal search → gate must always run; never let a model "decide" whether to search. (§5.1)
 - **Every episode gets a gist + embedding unconditionally** — never gated on whether extraction judged the episode "important." This is what makes the sliding context window safe to drop turns from. (§2.4, §6)
 - **KG writes are durable personal facts only** — fact-level salience (identity, preferences, people/places, plans, lasting attributes); never gate the gist on importance. (§2.3, §2.4, §4)
 - **Entity resolution is biased toward *not* merging on ambiguity.** Create a new node over a speculative merge; false splits are fixable later via `merge_entities`, false merges corrupt the graph. (§4.3)
 - **Media binaries are best-effort/ephemeral; transcripts and captions are the durable memory.** Never assume a `MediaRef` is fetchable indefinitely. (§7.3)
+- **Media identity is real columns, not JSON.** Persist `chat_id` / `message_id` / `media_*` / `is_media_artifact` on `raw_log`. Do not reintroduce `source_meta` or scrape opaque Telegram payloads in KG/enrichment — Telegram→`MediaRef` mapping stays typed under `src/telegram/`. (§2.1, §7.3)
 - **Model interfaces stay segregated:** `LoadedChatModel` and `LoadedEmbeddingModel` are separate types. Don't reintroduce an optional `embed()` on a chat model or vice versa. (§8.1)
-- **Channel adapters own their transport mode entirely** (polling / webhook / websocket). The core harness never inspects or depends on which transport a given adapter uses — it only sees normalized event callbacks. (§7.1)
+- **Telegram owns transport; harness is programmatic.** The harness never registers bot callbacks, owns Telegraf, injects `send`, or starts an extraction poll loop. Daemon wires `telegram.start((msg) → handleTurn)`, `harness.onTurnCompleted` → `telegram.send`, owns `processNextExtraction` (composes core `runExtraction` + queue helpers) and its drain loop — no `fetchMedia` port; enrichment reads the process-local media-byte cache filled on inbound download. Core is library-like: no long-running process starters. (§7.1, §7.3)
 - **Check `capabilities.audioInput` / `capabilities.vision` before routing media into a model call.** Never assume multimodal support — degrade to recording that media existed, without content, when the active model lacks the relevant capability. (§7.3, §8.1)
 - **Token budgets are computed via `countTokens()`, never hardcoded.** Any code touching the working-context or retrieved-context budget must measure against the active model's own `countTokens()` output (§5, §6, §8.3) — tokenization differs by provider, so a shared estimate is not a substitute.
 
@@ -48,7 +49,7 @@ These are correctness/thesis-preserving rules. Do not "helpfully" optimize aroun
 ## Code patterns to follow
 
 - **Loader factory pattern for models.** New providers are added as a new `loadX(config)` function returning `LoadedChatModel` or `LoadedEmbeddingModel` — never by branching provider-specific logic into call sites. (§8.1–8.2)
-- **`ChannelAdapter` pattern for channels.** New platforms (Slack, WhatsApp, etc.) are added as a new adapter implementing the existing interface — core agent logic must never import or reference a specific platform. (§7.1)
+- **Telegram-native runtime.** Telegram lives under `@towa/core` (`src/telegram/`) as plain factories (`createTelegram`, send helpers, normalize). Do **not** reintroduce a `ChannelAdapter` or separate `@towa/telegram` package. (§7)
 - **Provenance-first schema discipline.** Any new KG node or edge write must carry a pointer back to the `raw_log`/episode ids that support it. If you can't cite where a fact came from, don't write it. (§2.3, §4.3)
 - **Structured-output-first prompting, with a capability fallback.** Every pipeline-facing LLM call defines an explicit output schema. Check `capabilities.structuredOutput` before assuming native JSON/tool-forced output is available; fall back to prompt-based JSON + parse + one retry otherwise. (§5.1, §8.1)
 - **Idempotent extraction.** Re-running extraction on the same episode (e.g. after a crash mid-write) must be safe — no duplicate nodes/edges from a re-run. Check `pending_extraction` status before treating an episode as unprocessed. (§4.2)
@@ -62,7 +63,8 @@ These are correctness/thesis-preserving rules. Do not "helpfully" optimize aroun
 Pulled from the design doc's §11 (Explicitly Deferred / Rejected) — these were considered and turned down for stated reasons. Don't reintroduce them without first updating the design doc with new evidence.
 
 - **No speculative abstraction.** No plugin registry, no premature hook system, no config option for a use case that doesn't exist yet. Especially watch for this given the project's known tendency to over-engineer.
-- **No message broker.** The write-path queue is a SQLite table + a drain loop. Don't reach for RabbitMQ/Redis/etc. for a single-writer, single-user flow.
+- **No ChannelAdapter / multi-channel plugin layer.** Telegram-native; daemon wires telegram handlers → harness methods and owns send + the extraction poll loop. (§7, §11)
+- **No message broker.** The pending_extraction queue is a SQLite table + a daemon drain loop. Don't reach for RabbitMQ/Redis/etc. for a single-writer, single-user flow.
 - **No hierarchical rollup summaries** (day/month/quarter trees) without eval evidence that query-time synthesis + the KG genuinely can't cover a real query class.
 - **No embedding cache layer.** `embed()` is called directly against the loaded model. This was tried and deliberately backed out.
 - **No dedicated graph database.** Graph traversal is recursive CTEs over SQLite tables. The performance case for Neo4j/AGE doesn't exist at this project's scale.
@@ -76,12 +78,12 @@ Pulled from the design doc's §11 (Explicitly Deferred / Rejected) — these wer
 ## Style
 
 - TypeScript, strict mode.
-- Prefer plain functions and factory functions over classes where reasonable (matches the loader-factory and adapter patterns already established).
+- Prefer plain functions and factory functions over classes where reasonable (matches the loader-factory and Telegram factory patterns already established).
 - Module/folder naming should mirror the design doc's structure where practical — see §12's suggested repo layout as the starting scaffold, not a strict requirement.
 - Core libraries are chosen (§13 in the design doc) — Kysely, Zod, Telegraf, Pino.
-- **Build / typecheck:** from the repo root, `pnpm build` / `pnpm typecheck` run recursively across `packages/*` and `examples/*`. Per-package: `pnpm --filter @towa/core build`, etc. No lint or unit-test runner yet (evals are the correctness signal per design doc §9.3).
-- **Workspace:** root is a private aggregator (`towa-monorepo`). Libraries live under `packages/` — `@towa/core` (harness/DB/models/adapter interface), `@towa/telegram`, plus stubs `@towa/daemon` and `towa` (CLI). `examples/*` and `evals` are workspace members. Examples emit to `dist/` and run via `node --watch-path` (not `tsx`) so debugger source maps work. `pnpm --filter @towa/telegram-daemon dev` watches `@towa/core` + `@towa/telegram` + the example, then attaches inspect on `127.0.0.1:11001`.
-- **Daemon consumers use `createHarness`.** Examples/apps load models, open the DB, construct a channel adapter (e.g. `createTelegramAdapter` from `@towa/telegram`), then call `createHarness(...).start()` — they do not reimplement debounce / retrieval wire-up / drain startup (§6, §13).
+- **Build / typecheck:** from the repo root, `pnpm build` / `pnpm typecheck` run recursively across `packages/*` and `evals`. Per-package: `pnpm --filter @towa/core build`, etc. No lint or unit-test runner yet (evals are the correctness signal per design doc §9.3).
+- **Workspace:** root is a private aggregator (`towa-monorepo`). Libraries/apps under `packages/` — `@towa/core` (harness/DB/ai/Telegram), `@towa/daemon` (Telegram daemon + stub `towa` CLI bin). `evals` is a workspace member. Daemon emits to `dist/` and runs via `node --watch-path` (not `tsx`) so debugger source maps work. `pnpm --filter @towa/daemon dev` watches `@towa/core` + the daemon, then attaches inspect on `127.0.0.1:11001`.
+- **Daemon wiring:** load models, open the DB, `createTelegram`, `createHarness({ db, models, … })` (no transport ports), `harness.onTurnCompleted` → `telegram.send`, run a local poll loop that calls daemon `processNextExtraction` (which imports `runExtraction` / queue helpers from `@towa/core`), then `harness.start()` and `telegram.start((msg) => harness.handleTurn(msg))` — do not reimplement debounce / retrieval / late-arrival regenerate or move KG write logic (`runExtraction`, entity resolution, commit) into the daemon (§6, §7, §13).
 
 ---
 

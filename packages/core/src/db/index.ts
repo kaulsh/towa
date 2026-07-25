@@ -1,5 +1,5 @@
 export {
-  openDatabase,
+  Sqlite,
   migrate,
   VALID_TO_OPEN_SENTINEL,
   type Database,

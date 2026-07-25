@@ -9,9 +9,8 @@
       "timeout": 10000,
       "sourceMaps": true,
       "outFiles": [
-        "${workspaceFolder}/examples/telegram-daemon/dist/**/*.js",
-        "${workspaceFolder}/packages/core/dist/**/*.js",
-        "${workspaceFolder}/packages/telegram/dist/**/*.js"
+        "${workspaceFolder}/packages/daemon/dist/**/*.js",
+        "${workspaceFolder}/packages/core/dist/**/*.js"
       ]
     }
   ]

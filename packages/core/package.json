@@ -1,7 +1,7 @@
 {
   "name": "@towa/core",
   "version": "0.1.0",
-  "description": "Towa core library — harness, DB, models, and channel adapter interface.",
+  "description": "Towa core library — harness, DB, models, and Telegram runtime.",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -29,6 +29,7 @@
     "openai": "^6.46.0",
     "pino": "^9.7.0",
     "sqlite-vec": "^0.1.7-alpha.2",
+    "telegraf": "^4.16.3",
     "zod": "^3.25.67"
   },
   "devDependencies": {
