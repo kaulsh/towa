@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-import type { LoadedChatModel } from "../ai/types.js";
+import type { ChatMessage, LoadedChatModel } from "../ai/types.js";
 import type { WorkingContextTurn } from "../context-assembly/types.js";
 
 import { generateStructured } from "./structured.js";
@@ -29,6 +29,10 @@ export type QueryGenSchema = z.infer<typeof QueryGenSchema>;
  *
  * Mandatory pipeline stage — always runs; the model fills in queries/entities,
  * it cannot decline to search.
+ *
+ * Message shape matches the gate (§6): system → prior working-context turns as
+ * real user/assistant messages → final user turn with the current message.
+ * `recentContext` must already exclude the current unanswered burst.
  */
 export async function generateSearchQueries(
   chatModel: LoadedChatModel,
@@ -37,40 +41,36 @@ export async function generateSearchQueries(
   /** Extra queries injected on a gate follow-up round. */
   followUpQueries: readonly string[] = [],
 ): Promise<QueryGenResult> {
-  const contextBlock =
-    recentContext.length === 0
-      ? "(no recent context)"
-      : recentContext
-          .map((t) => `${t.role}: ${t.content}`)
-          .join("\n");
-
   const followUpBlock =
     followUpQueries.length > 0
       ? `\nAdditional follow-up search directions from a prior insufficient round:\n${followUpQueries.map((q) => `- ${q}`).join("\n")}`
       : "";
 
   const system = `You are the query-generation stage of a memory-retrieval pipeline.
-Given the user's message and recent conversation context, produce search queries and entity names that will help retrieve relevant past episodes and knowledge-graph facts.
+Prior messages (if any) are the recent live conversation (working-context window).
+The latest user message is the current user text to search for.
+Produce search queries and entity names that will help retrieve relevant past episodes and knowledge-graph facts.
 This stage always runs — you must produce at least one search query.
 If the user is asking an explicitly historical question (e.g. "what did I used to think", "where did I live before"), include a history_requests entry with the entity (and relation if clear).
 You may set include_history_hint=true for soft past-tense cues, but prefer history_requests for explicit historical asks.`;
 
-  const user = `Recent context:
-${contextBlock}
-
-Current message:
+  const user = `Current message:
 ${message}${followUpBlock}
 
 Return JSON with keys: search_queries (string[]), entity_names (string[]), include_history_hint (boolean), history_requests ({entity, relation: string|null}[]).`;
 
-  const raw = await generateStructured(
-    chatModel,
-    [
-      { role: "system", content: system },
-      { role: "user", content: user },
-    ],
-    QueryGenSchema,
-  );
+  const messages: ChatMessage[] = [
+    { role: "system", content: system },
+    ...recentContext.map(
+      (t): ChatMessage => ({
+        role: t.role,
+        content: t.content,
+      }),
+    ),
+    { role: "user", content: user },
+  ];
+
+  const raw = await generateStructured(chatModel, messages, QueryGenSchema);
 
   const historyRequests: HistoryRequest[] = (raw.history_requests ?? []).map(
     (h) => ({

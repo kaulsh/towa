@@ -2,7 +2,7 @@ export { runExtraction, type RunExtractionDeps } from "./run-extraction.js";
 export { resolveEntities, type EntityResolutionResult } from "./entity-resolution.js";
 export { prepareEdgeWrites } from "./edges.js";
 export { extractEpisodeKnowledge } from "./extract.js";
-export { enrichTurnsWithMedia } from "./media.js";
+export { enrichTurnsWithMedia, captionAndPersistInboundMedia } from "./media.js";
 export { commitExtraction, type ExtractionCommitInput } from "./commit.js";
 export { writeEpisodeGist, type WriteEpisodeGistInput } from "./write-gist.js";
 export { clearEpisodeExtractionArtifacts } from "./idempotency.js";

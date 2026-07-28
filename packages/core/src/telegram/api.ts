@@ -10,35 +10,32 @@
 import type { Telegram } from "telegraf";
 import type { Message } from "telegraf/types";
 
-import {
-  withTransientRetry,
-  type TransientRetryOptions,
-} from "./api-retry.js";
+import { withTransientRetry, type TransientRetryOptions } from "./api-retry.js";
 
 /** InputFile-shaped upload used for photo/video/voice buffers. */
 export type TelegramUpload = { source: Buffer };
+
+export type SendMessageParams = {
+  chatId: string;
+  text: string;
+  replyToMessageId?: number;
+};
+
+export type SendMediaParams = {
+  chatId: string;
+  data: TelegramUpload;
+  caption?: string;
+};
 
 export interface TelegramApi {
   getMe(): Promise<Awaited<ReturnType<Telegram["getMe"]>>>;
   deleteWebhook(
     extra?: Parameters<Telegram["deleteWebhook"]>[0],
   ): Promise<true>;
-  sendMessage(chatId: string, text: string): Promise<Message.TextMessage>;
-  sendPhoto(
-    chatId: string,
-    photo: TelegramUpload,
-    extra?: { caption?: string },
-  ): Promise<Message.PhotoMessage>;
-  sendVideo(
-    chatId: string,
-    video: TelegramUpload,
-    extra?: { caption?: string },
-  ): Promise<Message.VideoMessage>;
-  sendVoice(
-    chatId: string,
-    voice: TelegramUpload,
-    extra?: { caption?: string },
-  ): Promise<Message.VoiceMessage>;
+  sendMessage(params: SendMessageParams): Promise<Message.TextMessage>;
+  sendPhoto(params: SendMediaParams): Promise<Message.PhotoMessage>;
+  sendVideo(params: SendMediaParams): Promise<Message.VideoMessage>;
+  sendVoice(params: SendMediaParams): Promise<Message.VoiceMessage>;
   getFileLink(fileId: string): Promise<URL>;
 }
 
@@ -67,37 +64,55 @@ export function createTelegramApi(
     getMe: () => retrying("getMe", () => telegram.getMe(), options),
 
     deleteWebhook: (extra) =>
-      retrying(
-        "deleteWebhook",
-        () => telegram.deleteWebhook(extra),
-        options,
-      ),
+      retrying("deleteWebhook", () => telegram.deleteWebhook(extra), options),
 
-    sendMessage: (chatId, text) =>
+    sendMessage: ({ chatId, text, replyToMessageId }) =>
       retrying(
         "sendMessage",
-        () => telegram.sendMessage(chatId, text),
+        () =>
+          telegram.sendMessage(
+            chatId,
+            text,
+            replyToMessageId !== undefined
+              ? { reply_parameters: { message_id: replyToMessageId } }
+              : undefined,
+          ),
         options,
       ),
 
-    sendPhoto: (chatId, photo, extra) =>
+    sendPhoto: ({ chatId, data, caption }) =>
       retrying(
         "sendPhoto",
-        () => telegram.sendPhoto(chatId, photo, extra),
+        () =>
+          telegram.sendPhoto(
+            chatId,
+            data,
+            caption !== undefined ? { caption } : undefined,
+          ),
         options,
       ),
 
-    sendVideo: (chatId, video, extra) =>
+    sendVideo: ({ chatId, data, caption }) =>
       retrying(
         "sendVideo",
-        () => telegram.sendVideo(chatId, video, extra),
+        () =>
+          telegram.sendVideo(
+            chatId,
+            data,
+            caption !== undefined ? { caption } : undefined,
+          ),
         options,
       ),
 
-    sendVoice: (chatId, voice, extra) =>
+    sendVoice: ({ chatId, data, caption }) =>
       retrying(
         "sendVoice",
-        () => telegram.sendVoice(chatId, voice, extra),
+        () =>
+          telegram.sendVoice(
+            chatId,
+            data,
+            caption !== undefined ? { caption } : undefined,
+          ),
         options,
       ),
 

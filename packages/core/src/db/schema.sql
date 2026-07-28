@@ -25,6 +25,7 @@ CREATE TABLE raw_log (
     media_kind IS NULL
     OR media_kind IN ('image', 'audio', 'video', 'file')
   ),
+  media_file_name TEXT NULL,
   is_media_artifact INTEGER NOT NULL DEFAULT 0 CHECK (is_media_artifact IN (0, 1)),
   edit_of INTEGER NULL REFERENCES raw_log(id),
   deleted_marker INTEGER NOT NULL DEFAULT 0 CHECK (deleted_marker IN (0, 1))

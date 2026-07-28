@@ -9,6 +9,7 @@ import type {
   MessagePart,
 } from "../types.js";
 import { estimateTokens } from "./estimate-tokens.js";
+import { transcribeOpenAICompatible } from "./openai-transcribe.js";
 import {
   assertGenerateCapabilities,
   flattenMessageText,
@@ -31,11 +32,33 @@ export interface OllamaConfig {
    */
   structuredOutput?: boolean;
   vision?: boolean;
+  /**
+   * Voice-note transcription via OpenAI-compatible `/v1/audio/transcriptions`
+   * (e.g. Gemma4). No host ffmpeg — audio file uploads are unsupported inbound.
+   */
   audioInput?: boolean;
   /** Optional pino logger; defaults to `{ name: "ollama" }`. */
   logger?: Logger;
 }
 
+function collectAudioParts(
+  messages: readonly ChatMessage[],
+): Extract<MessagePart, { type: "audio" }>[] {
+  const out: Extract<MessagePart, { type: "audio" }>[] = [];
+  for (const message of messages) {
+    if (typeof message.content === "string") continue;
+    for (const part of message.content) {
+      if (part.type === "audio") out.push(part);
+    }
+  }
+  return out;
+}
+
+/**
+ * Map Towa chat messages to Ollama's chat API shape.
+ * Vision: image parts → `message.images`. Audio is handled separately via
+ * `/v1/audio/transcriptions` (not the images field).
+ */
 function toOllamaMessages(messages: ChatMessage[]): Message[] {
   return messages.map((message) => {
     if (typeof message.content === "string") {
@@ -43,11 +66,11 @@ function toOllamaMessages(messages: ChatMessage[]): Message[] {
     }
 
     const text = flattenMessageText(message.content);
-    const images = message.content
+    const images: Uint8Array[] = message.content
       .filter(
         (p): p is Extract<MessagePart, { type: "image" }> => p.type === "image",
       )
-      .map((p) => p.data);
+      .map((p) => new Uint8Array(p.data));
 
     const out: Message = { role: message.role, content: text };
     if (images.length > 0) {
@@ -159,6 +182,31 @@ export async function loadOllama(
     capabilities,
     async generate(input: GenerateInput): Promise<GenerateOutput> {
       assertGenerateCapabilities(capabilities, input);
+
+      // Voice notes: OpenAI-compatible transcriptions API (no ffmpeg / images hack).
+      const audioParts = collectAudioParts(input.messages);
+      if (audioParts.length > 0) {
+        const transcripts: string[] = [];
+        for (const part of audioParts) {
+          const transcribed = await transcribeOpenAICompatible({
+            baseURL: `${host.replace(/\/+$/, "")}/v1`,
+            model: config.model,
+            data: part.data,
+            mimeType: part.mimeType,
+            logger: log,
+          });
+          transcripts.push(transcribed);
+        }
+        const text = transcripts.filter((t) => t.length > 0).join("\n\n");
+        if (input.schema === undefined) {
+          return { text };
+        }
+        try {
+          return { text, structured: parseStructuredText(text, input.schema) };
+        } catch {
+          return { text };
+        }
+      }
 
       const format =
         input.schema !== undefined ? zodToJsonSchema(input.schema) : undefined;

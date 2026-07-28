@@ -18,11 +18,15 @@ import { createTelegramApi } from "./api.js";
 import {
   extractMediaRef,
   isContentMessage,
+  isUnsupportedMessage,
   toInboundMessage,
 } from "./normalize.js";
 import type { TelegramConfig } from "./types.js";
 
 const log = pino({ name: "telegram" });
+
+/** Static reply for inbound types we do not process (video, stickers, …). */
+const UNSUPPORTED_REPLY = "I can't process this type of message. Sorry!";
 
 function base64ToInputFile(data: string): { source: Buffer } {
   return { source: Buffer.from(data, "base64") };
@@ -180,6 +184,27 @@ export function createTelegram(
     if (!isAllowedChat(message.chat.id)) {
       return;
     }
+
+    // Temporary diagnostic: full Telegraf message before normalize/download/harness.
+    log.debug({ message }, "raw telegraf message");
+
+    // Unsupported types: static reply-to only — no raw_log persist, no harness.
+    if (isUnsupportedMessage(message)) {
+      try {
+        await api.sendMessage({
+          chatId: String(message.chat.id),
+          text: UNSUPPORTED_REPLY,
+          replyToMessageId: message.message_id,
+        });
+      } catch (err) {
+        log.warn(
+          { err, messageId: message.message_id },
+          "failed to send unsupported-message reply",
+        );
+      }
+      return;
+    }
+
     if (!isContentMessage(message)) {
       return;
     }
@@ -207,29 +232,35 @@ export function createTelegram(
       let sent: Message;
       switch (message.type) {
         case "text":
-          sent = await api.sendMessage(chatId, message.text);
+          sent = await api.sendMessage({ chatId, text: message.text });
           break;
         case "image":
-          sent = await api.sendPhoto(
+          sent = await api.sendPhoto({
             chatId,
-            base64ToInputFile(message.data),
-            message.caption !== undefined ? { caption: message.caption } : {},
-          );
+            data: base64ToInputFile(message.data),
+            ...(message.caption !== undefined
+              ? { caption: message.caption }
+              : {}),
+          });
           break;
         case "video":
-          sent = await api.sendVideo(
+          sent = await api.sendVideo({
             chatId,
-            base64ToInputFile(message.data),
-            message.caption !== undefined ? { caption: message.caption } : {},
-          );
+            data: base64ToInputFile(message.data),
+            ...(message.caption !== undefined
+              ? { caption: message.caption }
+              : {}),
+          });
           break;
         case "audio":
           // §7 maps OutboundMessage audio → sendVoice.
-          sent = await api.sendVoice(
+          sent = await api.sendVoice({
             chatId,
-            base64ToInputFile(message.data),
-            message.caption !== undefined ? { caption: message.caption } : {},
-          );
+            data: base64ToInputFile(message.data),
+            ...(message.caption !== undefined
+              ? { caption: message.caption }
+              : {}),
+          });
           break;
         default: {
           const _exhaustive: never = message;
@@ -248,7 +279,24 @@ export function createTelegram(
       const content =
         message.type === "text" ? message.text : (message.caption ?? "");
 
-      const outboundMedia = extractMediaRef(sent);
+      // Video is omitted from extractMediaRef (unsupported inbound); build
+      // the outbound ref from the Bot API reply after sendVideo.
+      let outboundMedia = extractMediaRef(sent);
+      if (
+        !outboundMedia &&
+        message.type === "video" &&
+        "video" in sent &&
+        sent.video
+      ) {
+        outboundMedia = {
+          fileId: sent.video.file_id,
+          mimeType: sent.video.mime_type ?? message.mimeType ?? "video/mp4",
+          kind: "video",
+          ...(sent.video.file_name !== undefined
+            ? { fileName: sent.video.file_name }
+            : {}),
+        };
+      }
 
       // Seed cache from bytes we already hold so drain can enrich assistant media.
       if (

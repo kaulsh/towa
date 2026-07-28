@@ -18,7 +18,29 @@ export interface BuildWorkingContextOptions {
 }
 
 /**
+ * Drop the trailing unanswered user run from recent raw_log turns.
+ *
+ * Inbound messages are persisted before the retrieval/generation turn, so the
+ * current burst already sits at the end of `recentTurns`. The harness passes
+ * that burst separately as `message` (+ media); keeping it in the working-
+ * context window would double-count it in budgets and chat history (§6).
+ */
+export function excludeTrailingUserTurns(
+  turns: readonly WorkingContextTurn[],
+): WorkingContextTurn[] {
+  let i = turns.length;
+  while (i > 0 && turns[i - 1]!.role === "user") {
+    i -= 1;
+  }
+  return turns.slice(0, i);
+}
+
+/**
  * Build a token-budgeted working-context buffer (§6).
+ *
+ * Callers should pass turns that already exclude the current unanswered user
+ * burst (`excludeTrailingUserTurns`) — that text is supplied separately as
+ * the live `message`.
  *
  * - Session boundary: an idle gap beyond the threshold drops earlier turns.
  * - Sliding window: keep the most recent turns that fit `budgetTokens`,
@@ -36,7 +58,9 @@ export async function buildWorkingContext(
 
   const threshold =
     options.sessionIdleThresholdSec ?? DEFAULT_SESSION_IDLE_THRESHOLD_SEC;
-  const sorted = [...turns].sort((a, b) => a.timestamp - b.timestamp || a.id - b.id);
+  const sorted = [...turns].sort(
+    (a, b) => a.timestamp - b.timestamp || a.id - b.id,
+  );
   const sessionTurns = applySessionBoundary(sorted, threshold);
 
   // Walk newest → oldest, accumulate until budget is exhausted.
@@ -49,8 +73,8 @@ export async function buildWorkingContext(
     if (selected.length > 0 && used + cost > options.budgetTokens) {
       break;
     }
-    // Always include at least the newest turn even if it alone exceeds budget
-    // (caller still needs the live message); subsequent turns are skipped.
+    // Always include at least the newest prior turn even if it alone exceeds
+    // budget; subsequent older turns are skipped.
     if (selected.length === 0 || used + cost <= options.budgetTokens) {
       selected.push(turn);
       used += cost;

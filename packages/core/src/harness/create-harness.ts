@@ -10,8 +10,10 @@ import type { Database } from "../db/types.js";
 import type {
   LoadedChatModel,
   LoadedEmbeddingModel,
+  MessagePart,
 } from "../ai/types.js";
 import { loadRecentWorkingTurns } from "../context-assembly/load-turns.js";
+import { captionAndPersistInboundMedia } from "../extraction/media.js";
 import { runRetrievalAndGenerate } from "../retrieval/pipeline.js";
 
 import { createBurstDebouncer, type BurstDebouncer } from "./debounce.js";
@@ -45,9 +47,7 @@ export interface CreateHarnessDeps {
   logger?: Logger;
 }
 
-export type TurnCompletedHandler = (
-  result: TurnResult,
-) => void | Promise<void>;
+export type TurnCompletedHandler = (result: TurnResult) => void | Promise<void>;
 
 export interface Harness {
   /** Start burst debounce. Does not start Telegram transport or the drain worker. */
@@ -74,54 +74,140 @@ interface PendingTurn {
   messages: InboundMessage[];
 }
 
-/**
- * Build user-facing message text for the reply-path generation call.
- * Media binaries may be present on the inbound message; this path still uses
- * text notes only (full multimodal generate from inbound base64 is deferred;
- * extraction enriches later §7.3). Missing bytes get an explicit load-failed note.
- */
-function messageTextForGeneration(
-  msg: InboundMessage,
-  chatModel: LoadedChatModel,
-): string {
-  const base = msg.content.trim();
-  if (!msg.media) {
-    return base || "(empty message)";
-  }
-
-  const { kind, data } = msg.media;
-
-  // Download failed (or never attempted) — tell the model explicitly.
-  if (!data) {
-    const note = `[user sent ${kind} media; content could not be loaded]`;
-    return base ? `${base}\n${note}` : note;
-  }
-
-  // Bytes present but reply path is still text-notes only.
-  const needsVision = kind === "image" || kind === "video";
-  const needsAudio = kind === "audio";
-  const supported =
-    (needsVision && chatModel.capabilities.vision) ||
-    (needsAudio && chatModel.capabilities.audioInput) ||
-    kind === "file";
-
-  if (supported && base) {
-    return base;
-  }
-
-  const note = `[user sent ${kind} media; content not available in this reply path]`;
-  return base ? `${base}\n${note}` : note;
+/** Text for query-gen / logs, plus multimodal parts for reply-path generate. */
+interface UserTurnContent {
+  text: string;
+  mediaParts: MessagePart[];
 }
 
-/** Join a debounced burst (and any late arrivals) into one generation input. */
-function joinBurstText(
+function contentTextWithReply(msg: InboundMessage): string {
+  let base = msg.content.trim();
+
+  if (msg.replyTo) {
+    // Rebuild reply prefix from typed field so generation does not depend on
+    // parsing the durable content annotation.
+    const withoutAnnotation = base.replace(
+      /^\[reply to #\d+(?:: "[^"]*")?\]\s*/,
+      "",
+    );
+    const replyPrefix =
+      msg.replyTo.quote !== undefined
+        ? `[reply to #${msg.replyTo.messageId}: "${msg.replyTo.quote}"]`
+        : `[reply to #${msg.replyTo.messageId}]`;
+    base = withoutAnnotation
+      ? `${replyPrefix} ${withoutAnnotation}`
+      : replyPrefix;
+  }
+
+  return base;
+}
+
+/**
+ * Multimodal image parts for reply-path `generate()` when vision is enabled
+ * and bytes are present (§7.3 / §8.1).
+ *
+ * Voice notes are **not** attached here — sync caption transcribes them to
+ * text (`[audio transcript]: …`) and that text is what reaches the model.
+ */
+function mediaPartsForGeneration(
+  msg: InboundMessage,
+  chatModel: LoadedChatModel,
+): MessagePart[] {
+  const media = msg.media;
+  if (!media?.data) return [];
+
+  const data = Buffer.from(media.data, "base64");
+  if (media.kind === "image" && chatModel.capabilities.vision) {
+    return [{ type: "image", data, mimeType: media.mimeType }];
+  }
+  return [];
+}
+
+/**
+ * Format a sync media artifact for reply-path generation.
+ * Durable raw_log keeps `[audio transcript]:` / `[image description]:` markers;
+ * the live prompt should read as user content, not a "please transcribe" job.
+ */
+function formatArtifactForGeneration(artifact: string): string {
+  const audioPrefix = "[audio transcript]:";
+  if (artifact.startsWith(audioPrefix)) {
+    const spoken = artifact.slice(audioPrefix.length).trim();
+    return spoken.length > 0
+      ? `(voice note — already transcribed) ${spoken}`
+      : "(voice note — empty transcript)";
+  }
+  const imagePrefix = "[image description]:";
+  if (artifact.startsWith(imagePrefix)) {
+    const desc = artifact.slice(imagePrefix.length).trim();
+    return desc.length > 0
+      ? `(image — description) ${desc}`
+      : "(image — empty description)";
+  }
+  return artifact;
+}
+
+/**
+ * Build user turn text (+ multimodal parts) for the reply path.
+ * Query-gen / logging use `text`; gate generate uses `text` plus `mediaParts`.
+ * When `mediaArtifacts` is set (sync caption), fold those into text.
+ * Missing bytes or lacking capability → explicit text notes (no silent drop).
+ */
+function buildUserTurnContent(
   messages: readonly InboundMessage[],
   chatModel: LoadedChatModel,
-): string {
-  return messages
-    .map((m) => messageTextForGeneration(m, chatModel))
-    .filter((t) => t.length > 0)
-    .join("\n");
+  mediaArtifacts?: ReadonlyMap<string, string>,
+): UserTurnContent {
+  const textChunks: string[] = [];
+  const mediaParts: MessagePart[] = [];
+
+  for (const msg of messages) {
+    const base = contentTextWithReply(msg);
+    const parts = mediaPartsForGeneration(msg, chatModel);
+    mediaParts.push(...parts);
+    const artifact = mediaArtifacts?.get(msg.messageId);
+
+    if (!msg.media) {
+      if (base) textChunks.push(base);
+      else textChunks.push("(empty message)");
+      continue;
+    }
+
+    const { kind, data, fileName } = msg.media;
+    const nameNote = fileName ? ` "${fileName}"` : "";
+
+    if (!data) {
+      const note = `[user sent ${kind} media${nameNote}; content could not be loaded]`;
+      textChunks.push(base ? `${base}\n${note}` : note);
+      continue;
+    }
+
+    if (artifact) {
+      const formatted = formatArtifactForGeneration(artifact);
+      textChunks.push(base ? `${base}\n${formatted}` : formatted);
+      continue;
+    }
+
+    if (parts.length > 0) {
+      // Bytes go to generate(); keep a usable text stub for query-gen / FTS.
+      textChunks.push(
+        base ||
+          (kind === "image"
+            ? "(user sent an image)"
+            : kind === "audio"
+              ? "(user sent a voice note)"
+              : `(user sent ${kind})`),
+      );
+      continue;
+    }
+
+    const note = `[user sent ${kind} media${nameNote}; content not available in this reply path]`;
+    textChunks.push(base ? `${base}\n${note}` : note);
+  }
+
+  return {
+    text: textChunks.filter((t) => t.length > 0).join("\n"),
+    mediaParts,
+  };
 }
 
 /**
@@ -283,7 +369,7 @@ export function createHarness(deps: CreateHarnessDeps): Harness {
           await saveInitInterviewState(db, stateBefore);
         }
         attempt += 1;
-        const answerText = joinBurstText(turnMessages, chatModel);
+        const answerText = buildUserTurnContent(turnMessages, chatModel).text;
         reply = await continueInitInterview({
           db,
           chatModel,
@@ -300,11 +386,40 @@ export function createHarness(deps: CreateHarnessDeps): Harness {
       return;
     }
 
+    const hasInboundMedia = turnMessages.some((m) => Boolean(m.media));
+    let mediaArtifacts: ReadonlyMap<string, string> | undefined;
+    if (hasInboundMedia) {
+      log.info(
+        { chatId, burstSize: turnMessages.length },
+        "sync media caption before reply",
+      );
+      const captioned = await captionAndPersistInboundMedia(
+        db,
+        turnMessages,
+        chatModel,
+      );
+      mediaArtifacts = captioned.artifactsByMessageId;
+      log.info(
+        {
+          chatId,
+          artifactCount: captioned.artifactsByMessageId.size,
+          appended: captioned.appended,
+        },
+        "sync media caption done",
+      );
+    }
+
+    const userTurn = buildUserTurnContent(
+      turnMessages,
+      chatModel,
+      mediaArtifacts,
+    );
     log.info(
       {
         chatId,
         burstSize: turnMessages.length,
-        contentPreview: joinBurstText(turnMessages, chatModel).slice(0, 80),
+        contentPreview: userTurn.text.slice(0, 80),
+        mediaPartCount: userTurn.mediaParts.length,
       },
       "running forced retrieval pipeline",
     );
@@ -312,12 +427,17 @@ export function createHarness(deps: CreateHarnessDeps): Harness {
     let result: Awaited<ReturnType<typeof runRetrievalAndGenerate>> | undefined;
     for (;;) {
       const recentTurns = await loadRecentWorkingTurns(db);
-      const message = joinBurstText(turnMessages, chatModel);
+      const turn = buildUserTurnContent(
+        turnMessages,
+        chatModel,
+        mediaArtifacts,
+      );
       result = await runRetrievalAndGenerate({
         db,
         chatModel,
         embeddingModel,
-        message,
+        message: turn.text,
+        mediaParts: turn.mediaParts,
         recentTurns,
         systemPrompt,
         sessionIdleThresholdSec,
@@ -326,6 +446,15 @@ export function createHarness(deps: CreateHarnessDeps): Harness {
       const next = takeLateArrivals(chatId, turnMessages);
       if (next === turnMessages) break;
       turnMessages = next;
+      // Late arrivals may include new media — re-caption before regenerating.
+      if (next.some((m) => Boolean(m.media))) {
+        const captioned = await captionAndPersistInboundMedia(
+          db,
+          turnMessages,
+          chatModel,
+        );
+        mediaArtifacts = captioned.artifactsByMessageId;
+      }
     }
 
     log.info(

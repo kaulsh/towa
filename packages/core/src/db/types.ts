@@ -27,6 +27,8 @@ export interface RawLogTable {
   media_file_id: string | null;
   media_mime_type: string | null;
   media_kind: MediaKind | null;
+  /** Original filename when the platform provided one. */
+  media_file_name: string | null;
   /** 1 when this edit row is a system transcript/caption artifact (§7.3). */
   is_media_artifact: SqliteBoolean;
   edit_of: number | null;

@@ -19,6 +19,10 @@ export interface DaemonConfig {
   chatModel: string;
   chatContextWindow?: number;
   ollamaHost?: string;
+  /** When true, image parts are sent via the provider vision path (§7.3 / §8.1). */
+  chatVision: boolean;
+  /** When true, audio parts are accepted for multimodal generate (§7.3 / §8.1). */
+  chatAudioInput: boolean;
 
   openaiBaseUrl?: string;
   openaiApiKey?: string;
@@ -48,6 +52,19 @@ function optionalInt(env: NodeJS.ProcessEnv, key: string): number | undefined {
     throw new Error(`Env ${key} must be a number, got: ${raw}`);
   }
   return Math.trunc(n);
+}
+
+/** Parse `1`/`true`/`yes` as true; unset defaults to `defaultValue`. */
+function optionalBool(
+  env: NodeJS.ProcessEnv,
+  key: string,
+  defaultValue: boolean,
+): boolean {
+  const raw = env[key]?.trim().toLowerCase();
+  if (!raw) return defaultValue;
+  if (raw === "1" || raw === "true" || raw === "yes") return true;
+  if (raw === "0" || raw === "false" || raw === "no") return false;
+  throw new Error(`Env ${key} must be a boolean, got: ${env[key]}`);
 }
 
 /**
@@ -114,6 +131,8 @@ export function loadConfig(env: NodeJS.ProcessEnv): DaemonConfig {
       (chatProvider === "ollama" ? "llama3.1:8b" : "gpt-4o-mini"),
     chatContextWindow: optionalInt(env, "TOWA_CHAT_CONTEXT_WINDOW"),
     ollamaHost: env.OLLAMA_HOST?.trim() || undefined,
+    chatVision: optionalBool(env, "TOWA_CHAT_VISION", false),
+    chatAudioInput: optionalBool(env, "TOWA_CHAT_AUDIO_INPUT", false),
 
     openaiBaseUrl,
     openaiApiKey,
@@ -152,12 +171,16 @@ export async function loadModels(cfg: DaemonConfig): Promise<{
       baseURL: cfg.openaiBaseUrl!,
       apiKey: cfg.openaiApiKey,
       contextWindow: cfg.chatContextWindow,
+      vision: cfg.chatVision,
+      audioInput: cfg.chatAudioInput,
     });
   } else {
     chatModel = await loadOllama({
       model: cfg.chatModel,
       host: cfg.ollamaHost,
       contextWindow: cfg.chatContextWindow,
+      vision: cfg.chatVision,
+      audioInput: cfg.chatAudioInput,
       logger: log.child({ component: "ollama" }),
     });
   }

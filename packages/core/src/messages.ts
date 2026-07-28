@@ -9,6 +9,8 @@ export interface MediaRef {
   fileId: string;
   mimeType: string;
   kind: MediaKind;
+  /** Original filename when the platform provides one (documents, audio, …). */
+  fileName?: string;
   /**
    * Ephemeral base64 bytes for the in-memory inbound / harness path.
    * Never written to `raw_log` — durable memory stores only the ref + text
@@ -23,6 +25,7 @@ export function durableMediaRef(ref: MediaRef): Omit<MediaRef, "data"> {
     fileId: ref.fileId,
     mimeType: ref.mimeType,
     kind: ref.kind,
+    ...(ref.fileName !== undefined ? { fileName: ref.fileName } : {}),
   };
 }
 
@@ -35,6 +38,13 @@ export function isMediaKind(value: string): value is MediaKind {
   );
 }
 
+/** Parent message reference for inbound replies (platform-agnostic). */
+export interface ReplyToRef {
+  messageId: string;
+  /** Truncated quote / parent text when available. */
+  quote?: string;
+}
+
 export interface InboundMessage {
   chatId: string;
   /** Platform-native message id (e.g. Telegram message_id). */
@@ -44,6 +54,8 @@ export interface InboundMessage {
   timestamp: number;
   /** May include ephemeral `data` (base64) for the harness; strip for raw_log. */
   media?: MediaRef;
+  /** Present when this message replies to another; content also carries an annotation. */
+  replyTo?: ReplyToRef;
 }
 
 export type OutboundMessage =

@@ -19,6 +19,7 @@ export interface AppendRawLogMedia {
   fileId: string;
   mimeType: string;
   kind: MediaKind;
+  fileName?: string;
 }
 
 export interface AppendRawLogMessageInput {
@@ -54,18 +55,21 @@ function mediaColumns(media: AppendRawLogMedia | null | undefined): {
   media_file_id: string | null;
   media_mime_type: string | null;
   media_kind: MediaKind | null;
+  media_file_name: string | null;
 } {
   if (!media) {
     return {
       media_file_id: null,
       media_mime_type: null,
       media_kind: null,
+      media_file_name: null,
     };
   }
   return {
     media_file_id: media.fileId,
     media_mime_type: media.mimeType,
     media_kind: media.kind,
+    media_file_name: media.fileName ?? null,
   };
 }
 
@@ -117,6 +121,7 @@ export async function appendRawLogEdit(
       "media_file_id",
       "media_mime_type",
       "media_kind",
+      "media_file_name",
     ])
     .where("id", "=", input.originalId)
     .executeTakeFirst();
@@ -134,6 +139,9 @@ export async function appendRawLogEdit(
           fileId: original.media_file_id,
           mimeType: original.media_mime_type,
           kind: original.media_kind,
+          ...(original.media_file_name
+            ? { fileName: original.media_file_name }
+            : {}),
         }
       : null);
 
@@ -177,6 +185,7 @@ export async function appendRawLogDelete(
       "media_file_id",
       "media_mime_type",
       "media_kind",
+      "media_file_name",
     ])
     .where("id", "=", input.originalId)
     .executeTakeFirst();
@@ -195,6 +204,9 @@ export async function appendRawLogDelete(
           fileId: original.media_file_id,
           mimeType: original.media_mime_type,
           kind: original.media_kind,
+          ...(original.media_file_name
+            ? { fileName: original.media_file_name }
+            : {}),
         }
       : null;
 

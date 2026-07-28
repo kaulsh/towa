@@ -8,11 +8,17 @@ export function mediaRefFromColumns(
   fileId: string | null,
   mimeType: string | null,
   kind: MediaKind | null,
+  fileName?: string | null,
 ): MediaRef | undefined {
   if (!fileId || !mimeType || !kind) {
     return undefined;
   }
-  return { fileId, mimeType, kind };
+  return {
+    fileId,
+    mimeType,
+    kind,
+    ...(fileName ? { fileName } : {}),
+  };
 }
 
 /**
@@ -49,6 +55,7 @@ interface RawRow {
   media_file_id: string | null;
   media_mime_type: string | null;
   media_kind: MediaKind | null;
+  media_file_name: string | null;
   is_media_artifact: SqliteBoolean;
   edit_of: number | null;
   deleted_marker: SqliteBoolean;
@@ -64,6 +71,7 @@ const RAW_LOG_SELECT = [
   "media_file_id",
   "media_mime_type",
   "media_kind",
+  "media_file_name",
   "is_media_artifact",
   "edit_of",
   "deleted_marker",
@@ -229,6 +237,7 @@ function resolveOne(
     original.media_file_id,
     original.media_mime_type,
     original.media_kind,
+    original.media_file_name,
   );
 
   return {

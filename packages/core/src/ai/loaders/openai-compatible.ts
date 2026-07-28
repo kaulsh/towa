@@ -10,11 +10,13 @@ import type {
   LoadedEmbeddingModel,
 } from "../types.js";
 import { estimateTokens } from "./estimate-tokens.js";
+import { transcribeOpenAICompatible } from "./openai-transcribe.js";
 import {
   assertGenerateCapabilities,
   flattenMessageText,
   parseStructuredText,
 } from "./shared.js";
+import type { MessagePart } from "../types.js";
 
 export interface OpenAICompatibleConfig {
   /** Model id as understood by the remote endpoint. */
@@ -56,16 +58,7 @@ type OpenAIChatContent =
           type: "image_url";
           image_url: { url: string };
         }
-      | {
-          type: "input_audio";
-          input_audio: { data: string; format: "wav" | "mp3" };
-        }
     >;
-
-function audioFormatFromMime(mimeType: string): "wav" | "mp3" {
-  if (mimeType.includes("mpeg") || mimeType.includes("mp3")) return "mp3";
-  return "wav";
-}
 
 function toOpenAIContent(content: ChatMessage["content"]): OpenAIChatContent {
   if (typeof content === "string") return content;
@@ -80,15 +73,8 @@ function toOpenAIContent(content: ChatMessage["content"]): OpenAIChatContent {
         type: "image_url",
         image_url: { url: `data:${part.mimeType};base64,${b64}` },
       });
-    } else if (part.type === "audio") {
-      parts.push({
-        type: "input_audio",
-        input_audio: {
-          data: part.data.toString("base64"),
-          format: audioFormatFromMime(part.mimeType),
-        },
-      });
     }
+    // Audio parts are handled via /v1/audio/transcriptions in generate(), not chat.
   }
   return parts;
 }
@@ -134,6 +120,19 @@ function countWithTiktoken(modelHint: string, text: string): number | null {
   }
 }
 
+function collectAudioParts(
+  messages: readonly ChatMessage[],
+): Extract<MessagePart, { type: "audio" }>[] {
+  const out: Extract<MessagePart, { type: "audio" }>[] = [];
+  for (const message of messages) {
+    if (typeof message.content === "string") continue;
+    for (const part of message.content) {
+      if (part.type === "audio") out.push(part);
+    }
+  }
+  return out;
+}
+
 /**
  * Universal remote/server chat escape hatch (§8.2), parameterized by `baseURL`.
  */
@@ -161,6 +160,31 @@ export async function loadOpenAICompatible(
     capabilities,
     async generate(input: GenerateInput): Promise<GenerateOutput> {
       assertGenerateCapabilities(capabilities, input);
+
+      // Voice transcription via /v1/audio/transcriptions (same as Ollama path).
+      const audioParts = collectAudioParts(input.messages);
+      if (audioParts.length > 0) {
+        const transcripts: string[] = [];
+        for (const part of audioParts) {
+          const transcribed = await transcribeOpenAICompatible({
+            baseURL: config.baseURL,
+            apiKey: config.apiKey,
+            model: config.model,
+            data: part.data,
+            mimeType: part.mimeType,
+          });
+          transcripts.push(transcribed);
+        }
+        const text = transcripts.filter((t) => t.length > 0).join("\n\n");
+        if (input.schema === undefined) {
+          return { text };
+        }
+        try {
+          return { text, structured: parseStructuredText(text, input.schema) };
+        } catch {
+          return { text };
+        }
+      }
 
       if (input.schema !== undefined) {
         const completion = await client.chat.completions.create({

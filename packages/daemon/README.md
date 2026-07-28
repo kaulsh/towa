@@ -55,6 +55,8 @@ pnpm dev
 | `TOWA_DB_PATH` | no | Default `./towa.db` |
 | `TOWA_CHAT_PROVIDER` | no | `ollama` (default) or `openai-compatible` |
 | `TOWA_CHAT_MODEL` | no | Default `llama3.1:8b` / `gpt-4o-mini` |
+| `TOWA_CHAT_VISION` | no | `true` to enable image multimodal generate (Ollama `messages[].images`) |
+| `TOWA_CHAT_AUDIO_INPUT` | no | `true` to enable audio multimodal generate |
 | `OLLAMA_HOST` | no | Default `http://127.0.0.1:11434` |
 | `OPENAI_BASE_URL` / `OPENAI_API_KEY` | if openai-compatible | Shared by chat and/or embeddings |
 | `TOWA_EMBEDDING_PROVIDER` | no | `local` (default) or `openai-compatible` |

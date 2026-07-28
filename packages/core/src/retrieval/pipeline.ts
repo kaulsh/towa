@@ -5,10 +5,12 @@ import type { Database } from "../db/types.js";
 import type {
   LoadedChatModel,
   LoadedEmbeddingModel,
+  MessagePart,
 } from "../ai/types.js";
 import {
   buildWorkingContext,
   computeTokenBudgets,
+  excludeTrailingUserTurns,
   type ComputeTokenBudgetsOptions,
   type WorkingContextTurn,
 } from "../context-assembly/index.js";
@@ -24,11 +26,20 @@ export interface RunRetrievalAndGenerateInput {
   db: Kysely<Database>;
   chatModel: LoadedChatModel;
   embeddingModel: LoadedEmbeddingModel;
-  /** Current user message text. */
+  /**
+   * Current user burst text (already persisted to raw_log before this turn).
+   * Passed separately so it is not also budgeted inside working-context.
+   */
   message: string;
   /**
-   * Recent raw turns available for the working-context window (may include
-   * the current message; session boundary + token trim are applied here).
+   * Optional image/audio parts for reply-path multimodal generate (§7.3).
+   * Attached to the gate user message when non-empty; ignored by query-gen.
+   */
+  mediaParts?: readonly MessagePart[];
+  /**
+   * Recent raw turns from the DB (may still include the current unanswered
+   * user burst). The pipeline strips that trailing user run before budgeting
+   * the working-context window.
    */
   recentTurns: readonly WorkingContextTurn[];
   systemPrompt?: string;
@@ -47,6 +58,7 @@ export interface RunRetrievalAndGenerateResult {
   roundsUsed: number;
   lastQueryGen: QueryGenResult;
   lastRetrieved: AssembledRetrievedContext;
+  /** Prior conversation only — current user burst is `message`, not here. */
   workingContext: WorkingContextTurn[];
 }
 
@@ -74,8 +86,12 @@ export async function runRetrievalAndGenerate(
     input.budgetOptions,
   );
 
+  // Current burst is already in raw_log / recentTurns; exclude it so the
+  // sliding window budgets prior conversation only. `input.message` (+ media)
+  // is the live user turn for query-gen and the gate.
+  const priorTurns = excludeTrailingUserTurns(input.recentTurns);
   const workingContext = await buildWorkingContext(
-    input.recentTurns,
+    priorTurns,
     input.chatModel,
     {
       budgetTokens: budgets.workingContext,
@@ -126,6 +142,7 @@ export async function runRetrievalAndGenerate(
       workingContext,
       retrievedBlocks: retrieved.formattedBlocks,
       message: input.message,
+      mediaParts: input.mediaParts,
       // Hard cap: must answer with context on hand — no diagnostic stub to the user.
       forceAnswer,
     });

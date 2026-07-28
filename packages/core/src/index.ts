@@ -54,6 +54,7 @@ export type {
   MediaKind,
   MediaRef,
   OutboundMessage,
+  ReplyToRef,
   SendOutbound,
   TurnResult,
 } from "./messages.js";

@@ -74,13 +74,14 @@ export async function runExtraction(
     episode.end_msg_id,
   );
 
-  // Enrich from wire/user caption (not a prior media_artifact tip) so re-runs
-  // replace the artifact instead of double-appending.
+  // Enrich from wire caption unless the tip already has a reply-path sync
+  // media artifact — then reuse tip content and skip the describe LLM.
   const turnsForEnrich: EpisodeTurn[] = resolvedTurns.map((t) => ({
     rawLogId: t.id,
     timestamp: t.timestamp,
     role: t.role,
-    content: t.wireContent,
+    content:
+      t.media && t.content !== t.wireContent ? t.content : t.wireContent,
     messageId: t.messageId ?? "",
     ...(t.media ? { media: t.media } : {}),
   }));
