@@ -1,6 +1,6 @@
 # Towa
 
-Telegram-native AI agent harness built around durable long-term memory recall. Architecture and decision rationale: [`docs/towa-design.md`](./docs/towa-design.md). Coding conventions: [`CLAUDE.md`](./CLAUDE.md).
+Telegram-native AI agent harness built around durable long-term memory recall.
 
 ## Workspace
 
@@ -8,24 +8,17 @@ Telegram-native AI agent harness built around durable long-term memory recall. A
 packages/core/     # @towa/core — harness, DB, models, Telegram runtime, logging
 packages/daemon/   # @towa/daemon — Telegram daemon + `towa` CLI bin
 evals/             # @towa/evals scaffolding
-docs/
 ```
 
-## Build
+## Development
 
 ```bash
-pnpm install
-pnpm build          # build packages
-pnpm typecheck
-```
-
-## Run
-
-```bash
+pnpm -r install
 cd packages/daemon
 cp towa.example.yaml towa.yaml   # set chat_id / models
-cp .env.example .env             # TELEGRAM_BOT_TOKEN=…
-pnpm exec towa run --config-file ./towa.yaml
+cp .env.example .env             # set TELEGRAM_BOT_TOKEN
+cd ../..
+pnpm dev
 ```
 
-Other terminals: `towa ping` / `status` / `logs` / `stop`. See [`packages/daemon/README.md`](./packages/daemon/README.md).
+See [`packages/daemon/README.md`](./packages/daemon/README.md).

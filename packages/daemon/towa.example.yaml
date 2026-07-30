@@ -8,7 +8,7 @@ db:
 
 telegram:
   # Single allow-listed private chat id (§7).
-  chat_id: "000000000"
+  chat_id: "00000000"
   # Optional webhook (omit for long-polling, the default):
   # webhook:
   #   domain: https://example.com

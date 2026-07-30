@@ -2,12 +2,12 @@
   "name": "towa-monorepo",
   "version": "0.1.0",
   "private": true,
-  "description": "Towa monorepo — AI agent harness for durable long-term memory recall. See docs/towa-design.md.",
+  "description": "Towa — AI agent harness for durable long-term memory recall.",
   "type": "module",
   "scripts": {
-    "build": "pnpm -r run build",
-    "build:w": "pnpm -r --parallel run build:w",
-    "typecheck": "pnpm -r run typecheck"
+    "typecheck": "pnpm --stream --filter @towa/* run typecheck",
+    "build": "pnpm --stream --filter @towa/* build",
+    "dev": "export FORCE_COLOR=1 && pnpm run build && pnpm --stream --parallel --filter @towa/* dev"
   },
   "keywords": [],
   "author": "",

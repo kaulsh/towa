@@ -15,10 +15,8 @@
   "scripts": {
     "build": "tsc",
     "build:w": "tsc -w --incremental",
-    "libs:build": "pnpm -C ../.. --filter @towa/core run build",
-    "libs:w": "pnpm -C ../.. --filter @towa/core run build:w",
-    "dev:node": "node --watch-path=./dist --watch-preserve-output --enable-source-maps --inspect=127.0.0.1:11001 dist/main.js | pino-pretty --config .pino-prettyrc",
-    "dev": "pnpm run libs:build && tsc && run-p build:w libs:w dev:node",
+    "dev:node": "node --watch-path=./dist --watch-path=./towa.yaml --watch-preserve-output --enable-source-maps --inspect=127.0.0.1:11001 dist/main.js | pino-pretty --config .pino-prettyrc",
+    "dev": "run-p build:w dev:node",
     "start": "node --enable-source-maps dist/main.js | pino-pretty --config .pino-prettyrc",
     "typecheck": "tsc --noEmit"
   },
