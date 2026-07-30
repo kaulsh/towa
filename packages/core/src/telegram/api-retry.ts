@@ -4,13 +4,12 @@
  * Used by `createTelegramApi` — not applied by monkey-patching Telegraf.
  */
 
-import type { Logger } from "pino";
+import { getLogger } from "../logging.js";
 
 const DEFAULT_BASE_DELAY_MS = 1_000;
 const DEFAULT_MAX_DELAY_MS = 30_000;
 
 export interface TransientRetryOptions {
-  logger?: Logger;
   /** Label included in warn logs (e.g. API method name). */
   label?: string;
   baseDelayMs?: number;
@@ -84,6 +83,8 @@ export function isTransientTelegramApiError(err: unknown): boolean {
   );
 }
 
+const log = getLogger("telegram-api");
+
 /**
  * Retry `fn` on transient Telegram/network errors with exponential backoff
  * (honors `retry_after` when present).
@@ -108,7 +109,7 @@ export async function withTransientRetry<T>(
       if (!allow) throw err;
 
       const retryInMs = retryDelayMs(attempt, baseDelayMs, maxDelayMs, err);
-      options.logger?.warn(
+      log.warn(
         { err, label, attempt, retryInMs },
         "transient failure; retrying",
       );

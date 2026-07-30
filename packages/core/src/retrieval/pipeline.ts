@@ -1,5 +1,4 @@
 import type { Kysely } from "kysely";
-import type { Logger } from "pino";
 
 import type { Database } from "../db/types.js";
 import type {
@@ -14,6 +13,7 @@ import {
   type ComputeTokenBudgetsOptions,
   type WorkingContextTurn,
 } from "../context-assembly/index.js";
+import { getLogger } from "../logging.js";
 
 import { assembleRetrievedContext } from "./assemble.js";
 import { generateWithGate } from "./gate.js";
@@ -49,7 +49,6 @@ export interface RunRetrievalAndGenerateInput {
   /** Passed through to working-context session boundary (§6). */
   sessionIdleThresholdSec?: number;
   nowSec?: number;
-  logger?: Logger;
 }
 
 export interface RunRetrievalAndGenerateResult {
@@ -78,7 +77,7 @@ export async function runRetrievalAndGenerate(
   const systemPrompt = input.systemPrompt ?? DEFAULT_SYSTEM_PROMPT;
   const maxRounds = input.maxGateRounds ?? GATE_MAX_ROUNDS;
   const nowSec = input.nowSec ?? Math.floor(Date.now() / 1000);
-  const log = input.logger;
+  const log = getLogger("retrieval");
 
   const budgets = await computeTokenBudgets(
     input.chatModel,
@@ -148,7 +147,7 @@ export async function runRetrievalAndGenerate(
     });
 
     if (!gate.insufficient) {
-      log?.info(
+      log.info(
         {
           round,
           forceAnswer,
@@ -161,7 +160,7 @@ export async function runRetrievalAndGenerate(
       break;
     }
 
-    log?.info(
+    log.info(
       {
         round,
         followUpQueries: gate.followUpQueries,

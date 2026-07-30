@@ -5,13 +5,14 @@ Short list of items explicitly put off. Not a full backlog — only things calle
 ## Runtime / daemon
 
 - **Daemon restart / config-watch policy** — watch local config file(s) and restart when they change (user will bring this up later).
-- **CLI beyond stub / real `towa start`** — stub bin only; product commands + config system still later (§13).
+- **Background daemonize / systemd unit** — `towa run` stays foreground for now; detach / service packaging later.
 
 ## Media / memory
 
-- **Full multimodal generation on the reply path** — inbound may carry base64 on `media.data`, but harness generation still text-notes media; transcripts/captions remain drain-time enrichment (§7.3).
 - **Query-time media re-download** — design §7.3 optional best-effort path when a retrieved caption is insufficient and the platform ref has not expired; not built (drain uses process-local cache only; no public `fetchMedia`).
-- **Video / file multimodal extraction** — drain describes image/audio when capabilities allow; video/file stay durable “media present” notes only.
+- **Video inbound** — `video` / `video_note` are unsupported: static Telegram reply (`"I can't process this type of message yet."`) with `reply_parameters`; no harness turn / no raw_log persist. No `video_note` MediaKind. Outbound video send still exists.
+- **Audio file inbound** — Telegram `audio` (music) and `document` with `audio/*` mime are unsupported (same static reply). Only **voice notes** (`message.voice`) are accepted; sync caption uses `/v1/audio/transcriptions`.
+- **Video / file multimodal extraction** — drain describes image / voice when capabilities allow; video/file stay durable “media present” notes only (inbound video never reaches drain today).
 
 ## Maintenance
 

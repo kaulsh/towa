@@ -17,6 +17,14 @@
  * part of this API.
  */
 
+// Process-wide logging (§13) — configureLogging once; getLogger everywhere
+export {
+  configureLogging,
+  getLogFilePath,
+  getLogger,
+  type ConfigureLoggingOptions,
+} from "./logging.js";
+
 // Database
 export * from "./db/index.js";
 

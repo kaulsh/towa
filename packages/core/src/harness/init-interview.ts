@@ -1,9 +1,9 @@
 import type { Kysely } from "kysely";
-import type { Logger } from "pino";
 
 import type { Database } from "../db/types.js";
 import type { ChatMessage, LoadedChatModel } from "../ai/types.js";
 import { generateStructured, z } from "../extraction/structured.js";
+import { getLogger } from "../logging.js";
 
 import {
   FACT_GOAL_IDS,
@@ -310,10 +310,9 @@ export async function startOrResumeInitInterview(input: {
   db: Kysely<Database>;
   chatModel: LoadedChatModel;
   chatId: string;
-  logger?: Logger;
 }): Promise<string> {
   const { db, chatModel, chatId } = input;
-  const log = input.logger;
+  const log = getLogger("init-interview");
 
   const state = await loadInitInterviewState(db, chatId);
   state.pendingGoals = pendingFromResolved(state.resolvedGoals);
@@ -359,7 +358,7 @@ export async function startOrResumeInitInterview(input: {
     state.status === "completed"
       ? COMPLETED_REPLY
       : composeInterviewReply(out, state.pendingGoals);
-  log?.info(
+  log.info(
     {
       chatId,
       status: state.status,
@@ -382,10 +381,9 @@ export async function continueInitInterview(input: {
   chatModel: LoadedChatModel;
   chatId: string;
   userMessage: string;
-  logger?: Logger;
 }): Promise<string> {
   const { db, chatModel, chatId, userMessage } = input;
-  const log = input.logger;
+  const log = getLogger("init-interview");
 
   const state = await loadInitInterviewState(db, chatId);
   if (state.status !== "active") {
@@ -399,7 +397,7 @@ export async function continueInitInterview(input: {
   if (state.turnCount > INIT_INTERVIEW_HARD_CAP_TURNS) {
     state.status = "completed";
     await saveInitInterviewState(db, state);
-    log?.info(
+    log.info(
       { chatId, turnCount: state.turnCount },
       "init interview hard-capped",
     );
@@ -438,7 +436,7 @@ export async function continueInitInterview(input: {
         : COMPLETED_REPLY
       : composeInterviewReply(out, state.pendingGoals);
 
-  log?.info(
+  log.info(
     {
       chatId,
       status: state.status,

@@ -1,5 +1,4 @@
 import type { Kysely } from "kysely";
-import pino, { type Logger } from "pino";
 
 import type {
   InboundMessage,
@@ -12,8 +11,10 @@ import type {
   LoadedEmbeddingModel,
   MessagePart,
 } from "../ai/types.js";
+import type { ComputeTokenBudgetsOptions } from "../context-assembly/types.js";
 import { loadRecentWorkingTurns } from "../context-assembly/load-turns.js";
 import { captionAndPersistInboundMedia } from "../extraction/media.js";
+import { getLogger } from "../logging.js";
 import { runRetrievalAndGenerate } from "../retrieval/pipeline.js";
 
 import { createBurstDebouncer, type BurstDebouncer } from "./debounce.js";
@@ -44,16 +45,15 @@ export interface CreateHarnessDeps {
   debounce?: Partial<HarnessDebounceOptions>;
   /** Passed through to working-context session boundary (§6). */
   sessionIdleThresholdSec?: number;
-  logger?: Logger;
+  /** Working / retrieved budget split options (§5 / §6). */
+  budgetOptions?: ComputeTokenBudgetsOptions;
 }
 
 export type TurnCompletedHandler = (result: TurnResult) => void | Promise<void>;
 
 export interface Harness {
-  /** Start burst debounce. Does not start Telegram transport or the drain worker. */
-  start(): void;
   /** Clear debounce timers. */
-  stop(): Promise<void>;
+  clear(): Promise<void>;
   /**
    * Accept an inbound user message into debounce/queue (variant 1).
    * Resolves when the message is accepted — does **not** wait for generation
@@ -223,16 +223,16 @@ export function createHarness(deps: CreateHarnessDeps): Harness {
     embeddingModel,
     systemPrompt,
     sessionIdleThresholdSec,
+    budgetOptions,
   } = deps;
-  const log = deps.logger ?? pino({ name: "harness" });
+  const log = getLogger("harness");
 
   const debounceOpts: HarnessDebounceOptions = {
     idleMs: deps.debounce?.idleMs ?? DEFAULT_DEBOUNCE_IDLE_MS,
     maxWaitMs: deps.debounce?.maxWaitMs ?? DEFAULT_DEBOUNCE_MAX_WAIT_MS,
   };
 
-  let started = false;
-  let debounce: BurstDebouncer | null = null;
+  const debounce = createBurstDebouncer(debounceOpts);
 
   let busy = false;
   /** Chat currently inside `runTurn` (generation in flight). */
@@ -343,7 +343,6 @@ export function createHarness(deps: CreateHarnessDeps): Harness {
         db,
         chatModel,
         chatId,
-        logger: log.child({ component: "init-interview" }),
       });
       await deliver(chatId, [{ type: "text", text: reply }]);
       return;
@@ -375,7 +374,6 @@ export function createHarness(deps: CreateHarnessDeps): Harness {
           chatModel,
           chatId,
           userMessage: answerText,
-          logger: log.child({ component: "init-interview" }),
         });
         const next = takeLateArrivals(chatId, turnMessages);
         if (next === turnMessages) break;
@@ -440,8 +438,8 @@ export function createHarness(deps: CreateHarnessDeps): Harness {
         mediaParts: turn.mediaParts,
         recentTurns,
         systemPrompt,
+        budgetOptions,
         sessionIdleThresholdSec,
-        logger: log.child({ component: "retrieval" }),
       });
       const next = takeLateArrivals(chatId, turnMessages);
       if (next === turnMessages) break;
@@ -508,36 +506,12 @@ export function createHarness(deps: CreateHarnessDeps): Harness {
   }
 
   return {
-    start(): void {
-      if (started) {
-        throw new Error("createHarness: start() called more than once");
-      }
-      started = true;
-
-      debounce = createBurstDebouncer(debounceOpts);
-
-      log.info(
-        {
-          chatModel: chatModel.id,
-          embeddingModel: embeddingModel.id,
-          debounceIdleMs: debounceOpts.idleMs,
-          debounceMaxWaitMs: debounceOpts.maxWaitMs,
-        },
-        "harness started (awaiting inbound via handleTurn)",
-      );
-    },
-
-    async stop(): Promise<void> {
-      debounce?.clearAll();
-      debounce = null;
-      started = false;
-      log.info("harness stopped");
+    async clear(): Promise<void> {
+      debounce.clearAll();
+      log.info("harness timers cleared");
     },
 
     async handleTurn(msg: InboundMessage): Promise<void> {
-      if (!started || !debounce) {
-        throw new Error("createHarness: handleTurn before start()");
-      }
       log.info(
         {
           chatId: msg.chatId,

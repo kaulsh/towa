@@ -3,7 +3,7 @@ import {
   type FeatureExtractionPipeline,
   type Tensor,
 } from "@huggingface/transformers";
-import pino, { type Logger } from "pino";
+import { getLogger } from "../../logging.js";
 import type { LoadedEmbeddingModel } from "../types.js";
 
 export interface LocalEmbeddingsConfig {
@@ -16,8 +16,6 @@ export interface LocalEmbeddingsConfig {
    * Embedding dimensionality. When omitted, inferred during load.
    */
   dimensions?: number;
-  /** Optional pino logger; defaults to `{ name: "local-embeddings" }`. */
-  logger?: Logger;
 }
 
 const DEFAULT_MODEL = "onnx-community/all-MiniLM-L6-v2-ONNX";
@@ -50,7 +48,7 @@ export async function loadLocalEmbeddings(
   config: LocalEmbeddingsConfig = {},
 ): Promise<LoadedEmbeddingModel> {
   const modelId = config.model ?? DEFAULT_MODEL;
-  const log = config.logger ?? pino({ name: "local-embeddings" });
+  const log = getLogger("local-embeddings");
 
   log.info(
     { model: modelId },

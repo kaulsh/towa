@@ -2,15 +2,13 @@ import {
   listResumableExtractions,
   runExtraction,
   type CreateHarnessDeps,
+  getLogger,
 } from "@towa/core";
-import pino, { type Logger } from "pino";
 
 export type ProcessNextExtractionDeps = Pick<
   CreateHarnessDeps,
   "db" | "chatModel" | "embeddingModel"
-> & {
-  logger?: Logger;
-};
+>;
 
 /**
  * Claim at most one pending episode, run extraction end-to-end, update queue status.
@@ -25,7 +23,7 @@ export async function processNextExtraction(
   deps: ProcessNextExtractionDeps,
 ): Promise<"worked" | "idle"> {
   const { db, chatModel, embeddingModel } = deps;
-  const log = deps.logger ?? pino({ name: "process-next-extraction" });
+  const log = getLogger("process-next-extraction");
 
   const batch = await listResumableExtractions(db);
   const row = batch[0];

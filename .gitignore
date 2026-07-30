@@ -6,6 +6,7 @@ dist/
 .env
 .env.*
 !.env.example
+towa.yaml
 *.log
 .DS_Store
 *.tsbuildinfo

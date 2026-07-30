@@ -1,3 +1,5 @@
+import { getLogger } from "@towa/core";
+
 import {
   processNextExtraction,
   type ProcessNextExtractionDeps,
@@ -22,7 +24,7 @@ export function startExtractionDrainLoop(
   options: ExtractionDrainLoopOptions,
 ): ExtractionDrainLoopHandle {
   const { db, chatModel, embeddingModel, pollIntervalMs = 1000 } = options;
-  const log = options.logger;
+  const log = getLogger("drain-loop");
 
   let stopped = false;
   let wake: (() => void) | null = null;
@@ -50,7 +52,6 @@ export function startExtractionDrainLoop(
           db,
           chatModel,
           embeddingModel,
-          ...(log ? { logger: log } : {}),
         });
 
         if (result === "idle") {
@@ -63,7 +64,7 @@ export function startExtractionDrainLoop(
         consecutiveFailures = 0;
       } catch (err) {
         consecutiveFailures += 1;
-        log?.error({ err }, "extraction drain poll error");
+        log.error({ err }, "extraction drain poll error");
         await sleepOrWake(pollIntervalMs * Math.min(consecutiveFailures, 10));
       }
     }

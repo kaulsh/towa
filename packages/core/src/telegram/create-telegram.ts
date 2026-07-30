@@ -1,12 +1,12 @@
 import type { Message } from "telegraf/types";
 import { Telegraf } from "telegraf";
 import type { Kysely } from "kysely";
-import pino from "pino";
 
 import { appendRawLogMessage } from "../raw-log/index.js";
 import { closeEpisode, deriveEpisodeBoundary } from "../episodes/index.js";
 import { putMediaBytes } from "../media-byte-cache.js";
 import { enqueuePendingExtraction } from "../extraction/queue.js";
+import { getLogger } from "../logging.js";
 import type { Database } from "../db/types.js";
 import {
   durableMediaRef,
@@ -22,8 +22,6 @@ import {
   toInboundMessage,
 } from "./normalize.js";
 import type { TelegramConfig } from "./types.js";
-
-const log = pino({ name: "telegram" });
 
 /** Static reply for inbound types we do not process (video, stickers, …). */
 const UNSUPPORTED_REPLY = "I can't process this type of message. Sorry!";
@@ -74,11 +72,10 @@ export function createTelegram(
   db: Kysely<Database>,
   config: TelegramConfig,
 ): TelegramRuntime {
+  const log = getLogger("telegram");
   const bot = new Telegraf(config.botToken);
 
-  const api = createTelegramApi(bot.telegram, {
-    logger: log.child({ component: "telegram-api" }),
-  });
+  const api = createTelegramApi(bot.telegram);
 
   let inboundHandler: TelegramInboundHandler | null = null;
   let started = false;

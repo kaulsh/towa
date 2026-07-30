@@ -55,6 +55,8 @@ These are correctness/thesis-preserving rules. Do not "helpfully" optimize aroun
 - **Idempotent extraction.** Re-running extraction on the same episode (e.g. after a crash mid-write) must be safe — no duplicate nodes/edges from a re-run. Check `pending_extraction` status before treating an episode as unprocessed. (§4.2)
 - **Short, isolated write transactions.** Batch a full episode's KG writes (nodes + edges + gist) into one short commit, computed ahead of time — never a stream of tiny writes interleaved with LLM calls.
 - **Use the established libraries.** Kysely (queries), Zod (schema validation), Telegraf (Telegram), Pino (logging) — see design doc §13 for the full list and the reasoning behind each. Check §13 before adding a new dependency for something it already covers.
+- **Logging via `configureLogging` / `getLogger` only.** Never call bare `pino()` outside the logging module; never thread `logger` through deps. Daemon calls `configureLogging` once at `towa run`; everywhere else uses `getLogger(name)`. (§13)
+- **Daemon config is YAML + secret env.** Non-secrets in the config file; API keys / bot token / control tokens from env. Do not reintroduce env-everything config. (§13)
 
 ---
 
@@ -71,7 +73,7 @@ Pulled from the design doc's §11 (Explicitly Deferred / Rejected) — these wer
 - **No synchronous/inline extraction.** Never block a reply on the KG-extraction LLM call.
 - **No separate relevance-judge LLM call.** The generation call doubles as the sufficiency gate via structured output; don't add a dedicated judge model on top of it.
 - **No ReasoningBank-style procedural memory store.** If a future retrieval-strategy-learning layer is proposed, it must be explicitly gated behind eval evidence per §11 — it is not a general memory mechanism and should never replace the raw log / KG / gist planes.
-- **No new dependency for something §13 already covers.** Check the frameworks table before adding an ORM, HTTP framework, CLI framework, audio-transcription library, or alternative logger.
+- **No new dependency for something §13 already covers.** Check the frameworks table before adding an ORM, HTTP *framework* (control plane uses raw `node:http` only), CLI framework, audio-transcription library, or alternative logger.
 
 ---
 
@@ -82,8 +84,8 @@ Pulled from the design doc's §11 (Explicitly Deferred / Rejected) — these wer
 - Module/folder naming should mirror the design doc's structure where practical — see §12's suggested repo layout as the starting scaffold, not a strict requirement.
 - Core libraries are chosen (§13 in the design doc) — Kysely, Zod, Telegraf, Pino.
 - **Build / typecheck:** from the repo root, `pnpm build` / `pnpm typecheck` run recursively across `packages/*` and `evals`. Per-package: `pnpm --filter @towa/core build`, etc. No lint or unit-test runner yet (evals are the correctness signal per design doc §9.3).
-- **Workspace:** root is a private aggregator (`towa-monorepo`). Libraries/apps under `packages/` — `@towa/core` (harness/DB/ai/Telegram), `@towa/daemon` (Telegram daemon + stub `towa` CLI bin). `evals` is a workspace member. Daemon emits to `dist/` and runs via `node --watch-path` (not `tsx`) so debugger source maps work. `pnpm --filter @towa/daemon dev` watches `@towa/core` + the daemon, then attaches inspect on `127.0.0.1:11001`.
-- **Daemon wiring:** load models, open the DB, `createTelegram`, `createHarness({ db, models, … })` (no transport ports), `harness.onTurnCompleted` → `telegram.send`, run a local poll loop that calls daemon `processNextExtraction` (which imports `runExtraction` / queue helpers from `@towa/core`), then `harness.start()` and `telegram.start((msg) => harness.handleTurn(msg))` — do not reimplement debounce / retrieval / late-arrival regenerate or move KG write logic (`runExtraction`, entity resolution, commit) into the daemon (§6, §7, §13).
+- **Workspace:** root is a private aggregator (`towa-monorepo`). Libraries/apps under `packages/` — `@towa/core` (harness/DB/ai/Telegram/logging), `@towa/daemon` (Telegram daemon + `towa` CLI: `run`/`stop`/`status`/`ping`/`logs`). `evals` is a workspace member. Daemon emits to `dist/` and runs via `node --watch-path` (not `tsx`) so debugger source maps work. Prefer `towa run --config-file`; `pnpm --filter @towa/daemon dev` watches `@towa/core` + the daemon (needs `TOWA_CONFIG_FILE`), then attaches inspect on `127.0.0.1:11001`.
+- **Daemon wiring:** `configureLogging` once, load models from YAML+secret env, open the DB, `createTelegram`, `createHarness({ db, models, … })` (no transport ports / no logger deps), `harness.onTurnCompleted` → `telegram.send`, start control HTTP + drain poll loop (`processNextExtraction`), then `harness.start()` and `telegram.start((msg) => harness.handleTurn(msg))` — do not reimplement debounce / retrieval / late-arrival regenerate or move KG write logic into the daemon (§6, §7, §13).
 
 ---
 

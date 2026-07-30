@@ -1,10 +1,10 @@
 # Towa daemon (`@towa/daemon`)
 
-Configures and starts the Towa harness against Telegram: env → load models → open DB → `createTelegram` → `createHarness` → `onTurnCompleted` → extraction drain loop (`processNextExtraction` composing core KG/queue) → `harness.start()` → `telegram.start((msg) => harness.handleTurn(msg))`.
+Configures and starts the Towa harness against Telegram:
 
-The daemon owns bot callback registration, `processNextExtraction` (imports `runExtraction` / `listResumableExtractions` from `@towa/core`), and the extraction poll loop — no media port. Core stays library-like and does not start workers. The harness owns debounce / serial queue / late-arrival regenerate and emits outbound via `onTurnCompleted`; it does not inject `send` or start the drain. Inbound media bytes live in a process-local cache for drain enrichment (§7.3).
+`towa run --config-file ./towa.yaml` → YAML + secret env → logging → models → DB → `Telegram` → `createHarness` → drain loop → localhost control HTTP.
 
-Includes a stub `towa` CLI binary; product CLI commands are not implemented yet. Run the daemon via package scripts below.
+The daemon owns bot callbacks, `processNextExtraction`, the extraction poll loop, and the control plane (`POST /command`, `GET /logs`). Core stays library-like.
 
 ## Prerequisites
 
@@ -27,39 +27,42 @@ Configure:
 
 ```bash
 cd packages/daemon
-cp .env.example .env
-# edit .env — at least TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID
+cp towa.example.yaml towa.yaml   # set telegram.chat_id, models, …
+cp .env.example .env             # TELEGRAM_BOT_TOKEN=…
 ```
 
-## Run (daemon, without CLI)
+## CLI
 
-From `packages/daemon` (or `pnpm --filter @towa/daemon …` at the repo root):
+After build, the `towa` bin is available via `pnpm exec towa` (from `packages/daemon`) or a linked install.
 
 ```bash
-# one-shot (needs a prior `pnpm build` for @towa/core and this package)
-pnpm start
+# Foreground daemon (hosts control HTTP on 127.0.0.1:7432 by default)
+towa run --config-file ./towa.yaml
 
-# watch: tsc for @towa/core + this package, then node --watch-path on dist/
-# inspect listens on 127.0.0.1:11001 — use VS Code "Attach to 11001"
-pnpm dev
+# From another terminal:
+towa ping
+towa status
+towa logs                  # stream NDJSON (pipe to pino-pretty if desired)
+towa logs --lines 50 --no-follow
+towa stop                  # graceful shutdown
 ```
 
-`dev` runs compiled JS with `--enable-source-maps` (not `tsx`), so breakpoints in both the daemon and `@towa/core` resolve correctly.
+## Package scripts (dev)
 
-## Required env
+```bash
+# Set TOWA_CONFIG_FILE=./towa.yaml in .env (or the environment), then:
+pnpm start
+pnpm dev   # watch + inspect on 127.0.0.1:11001
+```
+
+## Secrets (env only)
 
 | Variable | Required | Notes |
 |---|---|---|
 | `TELEGRAM_BOT_TOKEN` | yes | Bot API token |
-| `TELEGRAM_CHAT_ID` | yes | Single allow-listed chat id (string/number) |
-| `TOWA_DB_PATH` | no | Default `./towa.db` |
-| `TOWA_CHAT_PROVIDER` | no | `ollama` (default) or `openai-compatible` |
-| `TOWA_CHAT_MODEL` | no | Default `llama3.1:8b` / `gpt-4o-mini` |
-| `TOWA_CHAT_VISION` | no | `true` to enable image multimodal generate (Ollama `messages[].images`) |
-| `TOWA_CHAT_AUDIO_INPUT` | no | `true` to enable audio multimodal generate |
-| `OLLAMA_HOST` | no | Default `http://127.0.0.1:11434` |
-| `OPENAI_BASE_URL` / `OPENAI_API_KEY` | if openai-compatible | Shared by chat and/or embeddings |
-| `TOWA_EMBEDDING_PROVIDER` | no | `local` (default) or `openai-compatible` |
-| `TOWA_EMBEDDING_DIMENSIONS` | if openai embeddings | e.g. `1536` |
+| `OPENAI_API_KEY` | if openai-compatible needs a key | Chat and/or embeddings |
+| `TELEGRAM_WEBHOOK_SECRET` | if using webhook secret | Maps to Telegraf `secretToken` |
+| `TOWA_CONTROL_TOKEN` | no | Bearer token for CLI ↔ control HTTP (or `control.token` in YAML) |
+| `TOWA_CONFIG_FILE` | for `pnpm start` / `dev` | Path passed to the same bootstrap as `towa run` |
 
-See `.env.example` for the full list.
+Everything else (chat id, model ids, debounce, logging path, control port, …) lives in the YAML file — see `towa.example.yaml`.

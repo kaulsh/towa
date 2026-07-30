@@ -1,6 +1,6 @@
 import { Ollama, type Message } from "ollama";
-import pino, { type Logger } from "pino";
 import { resolveContextWindow } from "../context-window-registry.js";
+import { getLogger } from "../../logging.js";
 import type {
   ChatMessage,
   GenerateInput,
@@ -37,8 +37,6 @@ export interface OllamaConfig {
    * (e.g. Gemma4). No host ffmpeg — audio file uploads are unsupported inbound.
    */
   audioInput?: boolean;
-  /** Optional pino logger; defaults to `{ name: "ollama" }`. */
-  logger?: Logger;
 }
 
 function collectAudioParts(
@@ -123,7 +121,7 @@ export async function loadOllama(
   config: OllamaConfig,
 ): Promise<LoadedChatModel> {
   const host = config.host ?? "http://127.0.0.1:11434";
-  const log = config.logger ?? pino({ name: "ollama" });
+  const log = getLogger("ollama");
   const client = new Ollama({ host });
   const pullIfMissing = config.pullIfMissing ?? true;
 
@@ -193,7 +191,6 @@ export async function loadOllama(
             model: config.model,
             data: part.data,
             mimeType: part.mimeType,
-            logger: log,
           });
           transcripts.push(transcribed);
         }

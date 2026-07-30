@@ -5,8 +5,8 @@ Telegram-native AI agent harness built around durable long-term memory recall. A
 ## Workspace
 
 ```
-packages/core/     # @towa/core — harness, DB, models, Telegram runtime
-packages/daemon/   # @towa/daemon — Telegram daemon + stub `towa` CLI bin
+packages/core/     # @towa/core — harness, DB, models, Telegram runtime, logging
+packages/daemon/   # @towa/daemon — Telegram daemon + `towa` CLI bin
 evals/             # @towa/evals scaffolding
 docs/
 ```
@@ -19,12 +19,13 @@ pnpm build          # build packages
 pnpm typecheck
 ```
 
-## Run the Telegram daemon
+## Run
 
 ```bash
 cd packages/daemon
-cp .env.example .env   # fill TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, model settings
-pnpm start             # or: pnpm dev (watch + inspect on 127.0.0.1:11001)
+cp towa.example.yaml towa.yaml   # set chat_id / models
+cp .env.example .env             # TELEGRAM_BOT_TOKEN=…
+pnpm exec towa run --config-file ./towa.yaml
 ```
 
-See [`packages/daemon/README.md`](./packages/daemon/README.md) for env vars and prerequisites.
+Other terminals: `towa ping` / `status` / `logs` / `stop`. See [`packages/daemon/README.md`](./packages/daemon/README.md).

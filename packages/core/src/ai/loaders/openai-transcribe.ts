@@ -1,6 +1,6 @@
 import { toFile } from "openai";
-import type { Logger } from "pino";
 
+import { getLogger } from "../../logging.js";
 import {
   isTelegramVoiceOgg,
   telegramVoiceToWav16kMono,
@@ -51,9 +51,8 @@ export async function transcribeOpenAICompatible(input: {
   model: string;
   data: Buffer;
   mimeType: string;
-  logger?: Logger;
 }): Promise<string> {
-  const log = input.logger;
+  const log = getLogger("openai-transcribe");
   const baseURL = input.baseURL.replace(/\/+$/, "");
 
   let uploadData = input.data;
@@ -61,14 +60,14 @@ export async function transcribeOpenAICompatible(input: {
   let uploadName = filenameForMime(input.mimeType);
 
   if (isTelegramVoiceOgg(input.mimeType)) {
-    log?.info(
+    log.info(
       { inBytes: input.data.length, mimeType: input.mimeType },
       "decoding Telegram voice note Ogg Opus → 16kHz mono WAV",
     );
     uploadData = await telegramVoiceToWav16kMono(input.data);
     uploadMime = "audio/wav";
     uploadName = "voice.wav";
-    log?.info({ outBytes: uploadData.length }, "voice note WAV ready");
+    log.info({ outBytes: uploadData.length }, "voice note WAV ready");
   }
 
   const file = await toFile(uploadData, uploadName, { type: uploadMime });
@@ -79,7 +78,7 @@ export async function transcribeOpenAICompatible(input: {
   // Ignored by strict OpenAI; required for usable Gemma4 audio on Ollama.
   form.append("think", "false");
 
-  log?.info(
+  log.info(
     {
       model: input.model,
       mimeType: uploadMime,
@@ -113,7 +112,7 @@ export async function transcribeOpenAICompatible(input: {
 
   const text = extractTranscriptionText(raw);
   if (!text) {
-    log?.warn({ raw }, "transcriptions returned empty text");
+    log.warn({ raw }, "transcriptions returned empty text");
     throw new Error(
       "transcriptions returned empty text (check model audio support / think mode)",
     );
