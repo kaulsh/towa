@@ -222,7 +222,7 @@ Three-stage pipeline per new episode:
 
 ## 5. Retrieval Architecture
 
-This is the core of the product. A new message lands; a few-thousand-token budget must be filled with the right slice of years of history.
+This is the core of the product. A new message lands; a bounded context pack (fixed top-K working turns + top-K retrieved episodes, optionally tightened by headroom) must be filled with the right slice of years of history.
 
 ### 5.1 Why not free-form agentic tool calls
 
@@ -258,7 +258,7 @@ flowchart LR
 4. **Context assembly** — resolves to **verbatim raw turns** from the winning episodes (never summaries-in-place-of-source), plus current-valid KG facts.
 5. **Generation-doubles-as-gate** — the same call that answers the user also declares sufficiency via structured output: either `{answer}` or `{insufficient: true, follow_up_queries: [...]}`. No separate judge/relevance LLM call — the common case (context was enough) costs nothing extra; only a genuinely hard turn pays for a second round.
 
-**Retrieved-context budget:** the "few-thousand-token budget" referenced above is not a fixed constant — it's the portion of the total per-turn token budget (§6) left over after the working-context buffer and reserved output are subtracted. RRF-ranked candidate episodes are added to context in order until that portion, measured via the active chat model's own `countTokens()` (§8.1, §8.3), is exhausted.
+**Retrieved-context packing:** RRF-ranked candidate episodes are taken in rank order up to a fixed **top-K** (code default; see §6). There is no pre-call `countTokens()` fill-until-budget — tokenizer estimates are unreliable across local models (Gemma/Qwen vs tiktoken), and Ollama/OpenAI usage fields only arrive *after* the generate call. Under headroom pressure from the previous turn's reported prompt tokens (§6), K is tightened for the next turn rather than failing or retrying the current one.
 
 ### 5.3 Temporal-aware retrieval
 
@@ -278,7 +278,9 @@ When both current and historical facts land in context together, they are presen
 
 Per turn: `system prompt + working-context turns (as real user/assistant messages) + final user message (retrieved memory §5 + current text, with multimodal parts when applicable) → generate`.
 
-**Working-context buffer:** a sliding window of the most recent raw turns, **token-budgeted** (not count-budgeted, so long messages don't blow it by turn-count alone). The budget is computed per active chat model, not a fixed global constant: `budget = capabilities.contextWindow − reservedForSystemPrompt − reservedForOutput`, split between working-context and retrieved-context (§5) by a configurable ratio (default: even split). Turns are measured against this budget using the active model's own `countTokens()` (§8.1) rather than a shared estimator, since tokenization genuinely differs by provider — see §8.3 for how `contextWindow` is resolved per model and how `countTokens()` accuracy varies by loader. When a turn ages out of the window, it is **dropped, not summarized** — no rolling-summary layer. This is safe specifically because every episode is unconditionally gisted+embedded (§2.4) regardless of whether KG extraction judged anything "important" — so anything that ages out remains fully findable by the same forced-retrieval pipeline that runs every turn anyway. The window size is therefore a UX/cost tuning knob (avoiding unnecessary retrieval round-trips for content still obviously part of the live thread), not a correctness knob — nothing is ever actually lost. Because inbound turns are persisted before retrieval runs, the trailing unanswered user burst is **excluded** from the working-context window (and its token budget) and supplied only as the live `message` (+ media) on the final user turn for both query-gen and the generation gate — so it is not double-counted.
+**Working-context buffer:** a sliding window of the most recent raw turns, packed by a fixed **top-K turn count** (after the session boundary), not by pre-call token measurement. When a turn ages out of the window, it is **dropped, not summarized** — no rolling-summary layer. This is safe specifically because every episode is unconditionally gisted+embedded (§2.4) regardless of whether KG extraction judged anything "important" — so anything that ages out remains fully findable by the same forced-retrieval pipeline that runs every turn anyway. The window size is therefore a UX/cost tuning knob (avoiding unnecessary retrieval round-trips for content still obviously part of the live thread), not a correctness knob — nothing is ever actually lost. Because inbound turns are persisted before retrieval runs, the trailing unanswered user burst is **excluded** from the working-context window and supplied only as the live `message` (+ media) on the final user turn for both query-gen and the generation gate — so it is not double-counted.
+
+**Headroom governor (next-turn throttle):** after each turn's generation-gate call, the harness records `usage.promptTokens` from the provider response (OpenAI-compatible `usage.prompt_tokens`, when present) against `capabilities.contextWindow`. If the previous turn's prompt occupied ≥ a high watermark of the window (code default ~85%), the next turn uses tightened top-K values for working turns and retrieved episodes (half of the code defaults, with small floors). Below the watermark, defaults apply. Cold start / missing usage → defaults. Packing/headroom constants are **not** daemon YAML knobs — only debounce and `session_idle_threshold_sec` are exposed there. This is deliberately **not** shrink-on-failure for the current turn — no overflow retry loop; pressure only affects subsequent packing. Usage metrics are never a substitute for deciding which *candidate* block fits mid-assembly; they only govern how aggressive the next fixed-K pack is.
 
 **Session boundary:** an idle gap beyond a threshold (e.g. >2 hours) resets the working-context buffer rather than letting it slide continuously. The first message of a new session naturally triggers retrieval to pull back whatever's relevant; carrying yesterday's tail forward is dead weight.
 
@@ -394,7 +396,7 @@ interface LoadedChatModel {
     contextWindow: number;
   };
   generate(input: GenerateInput): Promise<GenerateOutput>;
-  countTokens(text: string): Promise<number>;
+  // GenerateOutput may include usage?: { promptTokens, completionTokens }
 }
 
 interface LoadedEmbeddingModel {
@@ -404,7 +406,9 @@ interface LoadedEmbeddingModel {
 }
 ```
 
-Chat and embedding models are separate interfaces (not one interface with an optional `embed`), because loaders and call sites for each are genuinely different. Every loader below returns one of these two shapes; the harness never knows or cares whether the underlying model is local or remote.
+Chat and embedding models are separate interfaces (not one interface with an optional `embed`), because loaders and call sites for each are genuinely different. Every loader below returns one of these two shapes; the harness never knows or cares whether the underlying endpoint is local or remote.
+
+There is **no `countTokens()` on the chat model.** Context packing uses fixed top-K + a headroom governor fed by post-response `usage.promptTokens` (§5.2, §6) — pre-call tokenization was dropped because estimates (tiktoken, char heuristics) are wrong for common local models and exact tokenize APIs are provider-specific.
 
 **Structured-output fallback:** not every local model supports forced JSON/tool-schema output reliably. The harness checks `capabilities.structuredOutput` and falls back to prompt-based JSON + parse + one retry when false — this is what lets the forced-retrieval pipeline (§5) survive small local models without silently breaking.
 
@@ -412,19 +416,15 @@ Chat and embedding models are separate interfaces (not one interface with an opt
 
 | Loader | Role | Notes |
 |---|---|---|
-| `loadOllama(config)` | chat | **Default for chat + extraction.** Ollama owns model residency (loads on request, unloads on idle) — see §8.3. Auto-`pull` if missing; zero-friction local, matches "clone and run" OSS story. |
-| `loadLlamaCpp(config)` | chat | In-process GGUF inference via `node-llama-cpp`. No separate daemon at all — the purest local-only option, but model stays resident in VRAM for the daemon's entire lifetime (see §8.4 for why this is not the default). |
-| `loadLocalEmbeddings(config)` | embedding | Local embedding model via `transformers.js`/ONNX, **run on CPU** (see §8.4). Fires every turn via query-gen, so this is where local-first matters most — no network round-trip on the highest-frequency call in the system. |
-| `loadOpenAICompatible(config)` | chat | Universal remote/server escape hatch, parameterized by `baseURL` — covers OpenAI, OpenRouter, Groq, Together, vLLM, LM Studio, and Ollama's own OpenAI-compat endpoint in one loader. |
-| `loadOpenAICompatibleEmbeddings(config)` | embedding | Same idea, embedding-specific endpoints. |
-| `loadAnthropic(config)` | chat | Native Messages API — kept separate from the OpenAI-compat loader since tool-use/structured-output semantics differ enough to warrant a thin native implementation. |
-| `loadHuggingFaceInference(config)` | embedding / chat | Remote HF Inference Endpoints (distinct from `loadLlamaCpp`, which loads local weight files). |
+| `loadOpenAICompatible(config)` | chat | **Sole chat loader.** Parameterized by `baseURL` — covers OpenAI, OpenRouter, Groq, Together, vLLM, LM Studio, and Ollama's OpenAI-compatible `/v1` endpoint. Daemon YAML requires an explicit `models.chat.base_url` (no implicit local default; recipe configs can pin Ollama vs OpenAI later). Vision via `image_url` parts; voice notes via `/v1/audio/transcriptions`. |
+| `loadOpenAICompatibleEmbeddings(config)` | embedding | Same OpenAI-shaped embeddings API when not using local embeddings. |
+| `loadLocalEmbeddings(config)` | embedding | Local embedding model via `transformers.js`/ONNX, **run on CPU** (see §8.4). Fires every turn via query-gen — highest-frequency call; kept local-first. |
 
-**Per-role configuration**, not one global model: `chatModel`, `extractionModel`, `embeddingModel` (and optional `visionModel`) are each configured independently, each pointed at any loader. Default out-of-the-box config is fully offline: Ollama for chat + extraction, local CPU embeddings. A user can e.g. swap just `chatModel` to Anthropic for quality while keeping extraction and embeddings local and free — this is what "local-first, remote optional" actually means in practice, expressed per-role rather than all-or-nothing.
+**Rejected as dedicated loaders:** native `loadOllama` (auto-pull + `/api/chat` + `/api/tokenize`) and in-process `loadLlamaCpp` (`node-llama-cpp`). Ollama remains the recommended *server* for local chat, accessed only through its OpenAI-compatible API — duplicate HTTP clients and an always-resident GGUF path did not earn their keep for a long-lived daemon (see §11). Anthropic / HuggingFace native loaders stay unimplemented until there is a concrete consumer.
 
-### 8.3 Token counting & context-window registry
+**Per-role configuration** (daemon may still share one chat model across reply + extraction today): `chatModel` and `embeddingModel` are configured independently. Chat always goes through `loadOpenAICompatible` with an explicit `baseURL`; embeddings default to local CPU (`loadLocalEmbeddings`) with an openai-compatible escape hatch.
 
-Context-window budgeting (§5, §6) needs two things that differ per provider and were previously left implicit: how many tokens a given model's context window actually holds, and how many tokens a given string costs on that model's own tokenizer.
+### 8.3 Context-window registry & usage
 
 **Context-window registry, with override.** A small static table shipped with the harness:
 
@@ -432,31 +432,21 @@ Context-window budgeting (§5, §6) needs two things that differ per provider an
 const KNOWN_CONTEXT_WINDOWS: Record<string, number> = {
   'llama3.1:8b': 128_000,
   'qwen2.5:14b': 128_000,
+  'gemma4:e4b': 128_000,
   'claude-sonnet-5': 200_000,
   // ...
 };
 ```
 
-Every loader's config accepts an optional `contextWindow?: number` override — if a model id isn't in the table (a new release, a fine-tune, an obscure local model), the caller supplies it explicitly rather than the harness guessing or refusing to load. This value populates `capabilities.contextWindow` (§8.1). The table needs periodic manual updates as new models ship — a maintenance task, not a design decision (tracked in `CLAUDE.md`, not here).
+Every loader's config accepts an optional `contextWindow?: number` override — if a model id isn't in the table, the caller supplies it explicitly. This value populates `capabilities.contextWindow` (§8.1) and is the denominator for the headroom governor (§6). The table needs periodic manual updates as new models ship — a maintenance task, not a design decision (tracked in `CLAUDE.md`, not here).
 
-**Per-loader `countTokens()` accuracy.** `LoadedChatModel.countTokens()` (§8.1) is implemented per loader, and accuracy genuinely varies by provider:
-
-- **`loadLlamaCpp`** — exact. The loaded GGUF model carries its own tokenizer in-process; `node-llama-cpp` exposes it directly, at no network cost.
-- **`loadOllama`** — approximate unless the running model exposes a tokenize endpoint; falls back to a bundled general-purpose estimator otherwise.
-- **`loadAnthropic` / `loadOpenAICompatible` / `loadHuggingFaceInference`** — use the provider SDK's own counting utility where one exists; otherwise the same bundled estimator.
-
-These counts exist for **budgeting, not billing** — Towa is protecting the context window from overflow, not optimizing spend to the token, so a slight overestimate is the safe failure direction.
+**Post-response usage.** `generate()` should forward provider usage when the endpoint returns it (`usage.prompt_tokens` / `completion_tokens`). The harness stores the gate call's `promptTokens` per chat for the next turn's headroom check. Missing usage → no tightening (stay on default top-K). Usage is for **headroom governance and logging**, not for mid-assembly fill-until-budget.
 
 ### 8.4 Model residency, VRAM, and thermal considerations
 
-This has a real hardware consequence, not just a performance one, and it's why Ollama — not in-process `llama.cpp` — is the default chat loader:
+Local chat is expected to run behind an **external inference server** (typically Ollama) that owns model residency — loading into VRAM on first request and unloading after an idle timeout. The Towa daemon is only an HTTP client (`loadOpenAICompatible`) and never holds chat weights in-process. That avoids the always-on VRAM/heat cost of embedding a GGUF runtime inside the daemon.
 
-- **`loadLlamaCpp`** loads weights directly into the daemon's own process memory (VRAM if GPU-offloaded) at startup and keeps them resident for the daemon's entire lifetime. Since Towa is meant to run as an always-on daemon for years, this means a standing VRAM (and GPU heat) commitment around the clock, independent of whether anyone is actually messaging it.
-- **`loadOllama`** runs as its own server that owns model residency — loading into VRAM on first request and unloading after an idle timeout (default ~5 min). The Towa daemon is just an HTTP client and never directly holds VRAM. GPU memory and heat are spent only during actual message bursts.
-
-For a laptop GPU running an eternal-but-bursty personal chat (as opposed to a continuously-hammered production service), Ollama's load-on-demand/unload-on-idle model is the better fit on both efficiency and thermal grounds — GPU idles cool between conversations rather than staying loaded indefinitely. `loadLlamaCpp` remains available for users who want a zero-daemon, single-process setup and are comfortable with the always-resident tradeoff.
-
-The **embedding model** is deliberately kept off the GPU question entirely — small embedding models (roughly 22M–110M params) run fast enough on CPU that there's no need to contend for VRAM on the harness's highest-frequency call.
+The **embedding model** stays off the GPU question — small embedding models (roughly 22M–110M params) run on CPU via `loadLocalEmbeddings` so they do not contend for VRAM on the highest-frequency call.
 
 ---
 
@@ -509,6 +499,8 @@ Recorded so the reasoning isn't lost and isn't accidentally re-litigated without
 - **Synchronous (inline) extraction:** rejected — would stall every reply behind a multi-second LLM call. Async is safe because the raw log and working-context buffer already cover the read-your-writes gap for recently-stated facts.
 - **Embedding cache layer:** considered and rejected — unnecessary storage/complexity overhead at this scale; `embed()` is called directly against the loaded model (local or remote) with no caching indirection.
 - **Pluggable `ChannelAdapter` / multi-channel abstraction:** rejected for v1. Towa is Telegram-native; a generic adapter with `onMessage` registration inverted control the wrong way (harness owning channel callbacks) and invited a dual-DTO glue layer. Revisit only if a second surface is actually built — it should call harness methods (`handleTurn` / `onTurnCompleted`), not resurrect an adapter interface or inject transport into the harness.
+- **Dedicated `loadOllama` / `loadLlamaCpp` chat loaders:** rejected. Ollama is reached via `loadOpenAICompatible` + `/v1` (vision, transcriptions, structured `response_format`); auto-pull and `/api/tokenize` were not worth a second HTTP client. In-process `node-llama-cpp` pins VRAM for the daemon lifetime and was never wired into daemon YAML — dropped entirely (§8.2, §8.4).
+- **Pre-call `countTokens()` context packing:** rejected. Fill-until-token-budget depended on inaccurate estimators for local models; replaced by fixed top-K + next-turn headroom governor from response usage (§5.2, §6, §8.3). Shrink-on-failure retries for the current turn were considered and declined in favor of the governor.
 
 ---
 
@@ -529,7 +521,7 @@ towa/
         telegram/           # Telegraf runtime: createTelegram → daemon handlers
         messages.ts         # shared InboundMessage / OutboundMessage / MediaRef / TurnResult
         ai/
-          loaders/          # loadOllama, loadLlamaCpp, loadOpenAICompatible, etc.
+          loaders/          # loadOpenAICompatible, loadLocalEmbeddings, …
           types.ts          # LoadedChatModel / LoadedEmbeddingModel
         db/
           migrations/
@@ -558,7 +550,7 @@ Storage engines and model providers are covered in §3 and §8. This section cov
 | Config / secrets | YAML config file + secret env vars | Daemon boots with `towa run --config-file PATH`. Non-secret settings (chat id, model ids, paths, debounce, …) live in YAML validated with Zod. Secrets only via env: `TELEGRAM_BOT_TOKEN`, provider API keys (`OPENAI_API_KEY`, …), optional webhook/`control` tokens. Optional `dotenv` still loads those secrets for local dev. |
 | Control plane | Node built-in `node:http` | Tiny localhost server on the daemon: `POST /command` (`ping` / `status` / `stop`) and `GET /logs` (tail the pino log file). Not an application HTTP framework — no Express/Hono/Fastify. |
 | CLI | Hand-rolled argv on the `towa` bin | `towa run` starts the foreground daemon; `towa stop` / `status` / `ping` / `logs` are thin HTTP clients against the control plane. No CLI framework. |
-| Token counting | Per-loader — `node-llama-cpp`'s tokenizer, provider SDKs, bundled estimator fallback | See §8.3 for the full breakdown by loader. |
+| Context packing | Fixed top-K + headroom governor from `generate()` usage | No pre-call tokenizer; see §5.2, §6, §8.3. |
 | Testing | Evals only — promptfoo + Langfuse (§9) | See §9.3. |
 
 **Deliberately not introduced:** an HTTP *framework* (Telegraf covers Telegram webhook mode natively — §7.2; the daemon control plane uses raw `node:http` only), a CLI framework (hand-rolled argv is enough), a migration framework (§10 — hand-rolled scripts are sufficient at this scale), an embedding cache (§11 — tried and backed out), a message broker (§11 — a table + drain loop covers the write-path queue), a dedicated audio-transcription library (§7.3 — routed through multimodal chat models via `capabilities.audioInput` instead), a full ORM (§13 above — Kysely was chosen specifically to avoid this).

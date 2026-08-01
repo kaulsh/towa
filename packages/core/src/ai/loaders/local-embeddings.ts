@@ -55,9 +55,9 @@ export async function loadLocalEmbeddings(
     "loading local embedding model (first run may download ONNX weights)",
   );
 
-  const extractor = (await pipeline("feature-extraction", modelId, {
+  const extractor = await pipeline("feature-extraction", modelId, {
     device: "cpu",
-  })) as FeatureExtractionPipeline;
+  });
 
   let dimensions = config.dimensions;
   if (dimensions === undefined) {

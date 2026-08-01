@@ -42,13 +42,14 @@ These are correctness/thesis-preserving rules. Do not "helpfully" optimize aroun
 - **Model interfaces stay segregated:** `LoadedChatModel` and `LoadedEmbeddingModel` are separate types. Don't reintroduce an optional `embed()` on a chat model or vice versa. (§8.1)
 - **Telegram owns transport; harness is programmatic.** The harness never registers bot callbacks, owns Telegraf, injects `send`, or starts an extraction poll loop. Daemon wires `telegram.start((msg) → handleTurn)`, `harness.onTurnCompleted` → `telegram.send`, owns `processNextExtraction` (composes core `runExtraction` + queue helpers) and its drain loop — no `fetchMedia` port; enrichment reads the process-local media-byte cache filled on inbound download. Core is library-like: no long-running process starters. (§7.1, §7.3)
 - **Check `capabilities.audioInput` / `capabilities.vision` before routing media into a model call.** Never assume multimodal support — degrade to recording that media existed, without content, when the active model lacks the relevant capability. (§7.3, §8.1)
-- **Token budgets are computed via `countTokens()`, never hardcoded.** Any code touching the working-context or retrieved-context budget must measure against the active model's own `countTokens()` output (§5, §6, §8.3) — tokenization differs by provider, so a shared estimate is not a substitute.
+- **Context packing is fixed top-K + headroom governor — no pre-call `countTokens()`.** Working turns and retrieved episodes use code-default top-K (not YAML); tighten next turn from last gate `usage.promptTokens` vs `capabilities.contextWindow`. Do not reintroduce tiktoken/estimators or fill-until-token-budget packing (§5.2, §6, §8.3).
+- **Chat models load only via `loadOpenAICompatible`.** No native Ollama or llama.cpp loaders — daemon requires an explicit `models.chat.base_url`. Embeddings stay `loadLocalEmbeddings` or `loadOpenAICompatibleEmbeddings` (§8.2).
 
 ---
 
 ## Code patterns to follow
 
-- **Loader factory pattern for models.** New providers are added as a new `loadX(config)` function returning `LoadedChatModel` or `LoadedEmbeddingModel` — never by branching provider-specific logic into call sites. (§8.1–8.2)
+- **Loader factory pattern for models.** Chat is `loadOpenAICompatible`; new embedding backends (if any) are new `loadX(config)` factories — never branch provider-specific logic into call sites. (§8.1–8.2)
 - **Telegram-native runtime.** Telegram lives under `@towa/core` (`src/telegram/`) as plain factories (`createTelegram`, send helpers, normalize). Do **not** reintroduce a `ChannelAdapter` or separate `@towa/telegram` package. (§7)
 - **Provenance-first schema discipline.** Any new KG node or edge write must carry a pointer back to the `raw_log`/episode ids that support it. If you can't cite where a fact came from, don't write it. (§2.3, §4.3)
 - **Structured-output-first prompting, with a capability fallback.** Every pipeline-facing LLM call defines an explicit output schema. Check `capabilities.structuredOutput` before assuming native JSON/tool-forced output is available; fall back to prompt-based JSON + parse + one retry otherwise. (§5.1, §8.1)
@@ -73,6 +74,8 @@ Pulled from the design doc's §11 (Explicitly Deferred / Rejected) — these wer
 - **No synchronous/inline extraction.** Never block a reply on the KG-extraction LLM call.
 - **No separate relevance-judge LLM call.** The generation call doubles as the sufficiency gate via structured output; don't add a dedicated judge model on top of it.
 - **No ReasoningBank-style procedural memory store.** If a future retrieval-strategy-learning layer is proposed, it must be explicitly gated behind eval evidence per §11 — it is not a general memory mechanism and should never replace the raw log / KG / gist planes.
+- **No dedicated `loadOllama` / `loadLlamaCpp`.** Chat is openai-compatible only with an explicit `base_url`. Do not reintroduce a second HTTP client, in-process GGUF runtime, or an implicit Ollama default (§8.2, §11).
+- **No pre-call `countTokens()` packing.** Fixed top-K + next-turn headroom from response usage only (§5.2, §6, §11).
 - **No new dependency for something §13 already covers.** Check the frameworks table before adding an ORM, HTTP *framework* (control plane uses raw `node:http` only), CLI framework, audio-transcription library, or alternative logger.
 
 ---

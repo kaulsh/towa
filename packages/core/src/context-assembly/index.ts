@@ -1,16 +1,20 @@
-export {
-  computeTokenBudgets,
-} from "./budgets.js";
 export { loadRecentWorkingTurns } from "./load-turns.js";
+export { resolvePackingLimits } from "./packing.js";
 export {
   applySessionBoundary,
   buildWorkingContext,
   excludeTrailingUserTurns,
 } from "./working-context.js";
 export {
+  DEFAULT_HEADROOM_HIGH_WATERMARK,
+  DEFAULT_HEADROOM_TIGHTEN_FACTOR,
+  DEFAULT_MIN_RETRIEVED_TOP_K,
+  DEFAULT_MIN_WORKING_TOP_K,
+  DEFAULT_RETRIEVED_TOP_K,
   DEFAULT_SESSION_IDLE_THRESHOLD_SEC,
-  type ComputeTokenBudgetsOptions,
-  type TokenBudgets,
+  DEFAULT_WORKING_TOP_K,
+  type ContextPackingOptions,
+  type ResolvedPackingLimits,
   type WorkingContextRole,
   type WorkingContextTurn,
 } from "./types.js";

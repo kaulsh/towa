@@ -11,7 +11,6 @@ import type {
   LoadedEmbeddingModel,
   MessagePart,
 } from "../ai/types.js";
-import type { ComputeTokenBudgetsOptions } from "../context-assembly/types.js";
 import { loadRecentWorkingTurns } from "../context-assembly/load-turns.js";
 import { captionAndPersistInboundMedia } from "../extraction/media.js";
 import { getLogger } from "../logging.js";
@@ -45,8 +44,6 @@ export interface CreateHarnessDeps {
   debounce?: Partial<HarnessDebounceOptions>;
   /** Passed through to working-context session boundary (§6). */
   sessionIdleThresholdSec?: number;
-  /** Working / retrieved budget split options (§5 / §6). */
-  budgetOptions?: ComputeTokenBudgetsOptions;
 }
 
 export type TurnCompletedHandler = (result: TurnResult) => void | Promise<void>;
@@ -223,7 +220,6 @@ export function createHarness(deps: CreateHarnessDeps): Harness {
     embeddingModel,
     systemPrompt,
     sessionIdleThresholdSec,
-    budgetOptions,
   } = deps;
   const log = getLogger("harness");
 
@@ -241,6 +237,8 @@ export function createHarness(deps: CreateHarnessDeps): Harness {
   /** Messages that arrived for `inflightChatId` after its turn started. */
   const lateByChat = new Map<string, InboundMessage[]>();
   const turnCompletedHandlers: TurnCompletedHandler[] = [];
+  /** Last gate promptTokens per chat — headroom governor (§6). */
+  const lastPromptTokensByChat = new Map<string, number>();
 
   function enqueueBurst(batched: InboundMessage[]): void {
     if (batched.length === 0) return;
@@ -438,9 +436,12 @@ export function createHarness(deps: CreateHarnessDeps): Harness {
         mediaParts: turn.mediaParts,
         recentTurns,
         systemPrompt,
-        budgetOptions,
+        lastPromptTokens: lastPromptTokensByChat.get(chatId),
         sessionIdleThresholdSec,
       });
+      if (result.promptTokens !== undefined) {
+        lastPromptTokensByChat.set(chatId, result.promptTokens);
+      }
       const next = takeLateArrivals(chatId, turnMessages);
       if (next === turnMessages) break;
       turnMessages = next;

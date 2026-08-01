@@ -36,6 +36,7 @@ export type {
   ChatRole,
   GenerateInput,
   GenerateOutput,
+  GenerateUsage,
   ImagePart,
   LoadedChatModel,
   LoadedEmbeddingModel,
@@ -43,13 +44,9 @@ export type {
   TextPart,
 } from "./ai/types.js";
 export {
-  loadOllama,
-  loadLlamaCpp,
   loadLocalEmbeddings,
   loadOpenAICompatible,
   loadOpenAICompatibleEmbeddings,
-  type OllamaConfig,
-  type LlamaCppConfig,
   type LocalEmbeddingsConfig,
   type OpenAICompatibleConfig,
   type OpenAICompatibleEmbeddingsConfig,

@@ -4,7 +4,6 @@ import { parse as parseYaml } from "yaml";
 import { z } from "zod";
 import {
   loadLocalEmbeddings,
-  loadOllama,
   loadOpenAICompatible,
   loadOpenAICompatibleEmbeddings,
   getLogger,
@@ -13,7 +12,6 @@ import {
   type TelegramWebhookConfig,
 } from "@towa/core";
 
-const ChatProviderSchema = z.enum(["ollama", "openai-compatible"]);
 const EmbeddingProviderSchema = z.enum(["local", "openai-compatible"]);
 
 const YamlConfigSchema = z.object({
@@ -35,18 +33,14 @@ const YamlConfigSchema = z.object({
   }),
   models: z.object({
     chat: z.object({
-      provider: ChatProviderSchema.default("ollama"),
-      model: z.string().min(1).optional(),
+      /** OpenAI-compatible model id. */
+      model: z.string().min(1),
+      /** Required OpenAI-compatible API base URL (no implicit default). */
+      base_url: z.string().min(1),
       context_window: z.number().int().positive().optional(),
       vision: z.boolean().default(false),
       /** Telegram voice notes only — music/file audio remain unsupported inbound. */
       voice_note_input: z.boolean().default(false),
-      ollama_host: z.string().optional(),
-      openai: z
-        .object({
-          base_url: z.string().min(1),
-        })
-        .optional(),
     }),
     embedding: z.object({
       provider: EmbeddingProviderSchema.default("local"),
@@ -69,14 +63,10 @@ const YamlConfigSchema = z.object({
         })
         .default({ idle_ms: 800, max_wait_ms: 5000 }),
       session_idle_threshold_sec: z.number().int().positive().default(7200),
-      working_ratio: z.number().min(0).max(1).default(0.5),
-      reserved_for_output_ratio: z.number().min(0).max(1).default(0.2),
     })
     .default({
       debounce: { idle_ms: 800, max_wait_ms: 5000 },
       session_idle_threshold_sec: 7200,
-      working_ratio: 0.5,
-      reserved_for_output_ratio: 0.2,
     }),
   drain: z
     .object({
@@ -86,7 +76,11 @@ const YamlConfigSchema = z.object({
   logging: z
     .object({
       path: z.string().nullable().optional(),
-      max_bytes: z.number().int().positive().default(10 * 1024 * 1024),
+      max_bytes: z
+        .number()
+        .int()
+        .positive()
+        .default(10 * 1024 * 1024),
       stdout: z.boolean().default(true),
     })
     .default({ max_bytes: 10 * 1024 * 1024, stdout: true }),
@@ -109,26 +103,23 @@ export interface DaemonConfig {
   telegramChatId: string;
   telegramWebhook?: TelegramWebhookConfig;
 
-  chatProvider: "ollama" | "openai-compatible";
   chatModel: string;
   chatContextWindow?: number;
-  ollamaHost?: string;
+  chatBaseUrl: string;
   chatVision: boolean;
   /** Maps to chat model `capabilities.audioInput` — voice notes only. */
   chatVoiceNoteInput: boolean;
-  openaiBaseUrl?: string;
   openaiApiKey?: string;
 
   embeddingProvider: "local" | "openai-compatible";
   embeddingModel: string;
   embeddingDimensions?: number;
+  embeddingBaseUrl?: string;
 
   debounceIdleMs: number;
   debounceMaxWaitMs: number;
   systemPrompt?: string;
   sessionIdleThresholdSec: number;
-  workingRatio: number;
-  reservedForOutputRatio: number;
 
   drainPollIntervalMs: number;
 
@@ -191,22 +182,12 @@ export function loadConfigFromFile(
       ? resolvePath(configDir, yaml.logging.path)
       : join(dirname(dbPath), "towa.log");
 
-  const chatProvider = yaml.models.chat.provider;
   const embeddingProvider = yaml.models.embedding.provider;
+  const chatBaseUrl = yaml.models.chat.base_url.trim();
+  const embeddingBaseUrl =
+    yaml.models.embedding.openai?.base_url?.trim() || undefined;
 
-  const chatOpenAiBase =
-    yaml.models.chat.openai?.base_url ??
-    yaml.models.embedding.openai?.base_url;
-  const embeddingOpenAiBase =
-    yaml.models.embedding.openai?.base_url ??
-    yaml.models.chat.openai?.base_url;
-
-  if (chatProvider === "openai-compatible" && !chatOpenAiBase) {
-    throw new Error(
-      "models.chat.openai.base_url is required when models.chat.provider is openai-compatible",
-    );
-  }
-  if (embeddingProvider === "openai-compatible" && !embeddingOpenAiBase) {
+  if (embeddingProvider === "openai-compatible" && !embeddingBaseUrl) {
     throw new Error(
       "models.embedding.openai.base_url is required when models.embedding.provider is openai-compatible",
     );
@@ -222,14 +203,11 @@ export function loadConfigFromFile(
 
   const openaiApiKey = env.OPENAI_API_KEY?.trim() || undefined;
   const controlToken =
-    yaml.control.token?.trim() ||
-    env.TOWA_CONTROL_TOKEN?.trim() ||
-    undefined;
+    yaml.control.token?.trim() || env.TOWA_CONTROL_TOKEN?.trim() || undefined;
 
   let telegramWebhook: TelegramWebhookConfig | undefined;
   if (yaml.telegram.webhook) {
-    const secret =
-      env.TELEGRAM_WEBHOOK_SECRET?.trim() || undefined;
+    const secret = env.TELEGRAM_WEBHOOK_SECRET?.trim() || undefined;
     telegramWebhook = {
       domain: yaml.telegram.webhook.domain,
       port: yaml.telegram.webhook.port,
@@ -239,13 +217,6 @@ export function loadConfigFromFile(
     };
   }
 
-  const openaiBaseUrl =
-    chatProvider === "openai-compatible"
-      ? chatOpenAiBase
-      : embeddingProvider === "openai-compatible"
-        ? embeddingOpenAiBase
-        : chatOpenAiBase ?? embeddingOpenAiBase;
-
   return {
     configFilePath: absoluteConfigPath,
     dbPath,
@@ -254,15 +225,11 @@ export function loadConfigFromFile(
     telegramChatId: yaml.telegram.chat_id,
     telegramWebhook,
 
-    chatProvider,
-    chatModel:
-      yaml.models.chat.model?.trim() ||
-      (chatProvider === "ollama" ? "llama3.1:8b" : "gpt-4o-mini"),
+    chatModel: yaml.models.chat.model.trim(),
     chatContextWindow: yaml.models.chat.context_window,
-    ollamaHost: yaml.models.chat.ollama_host?.trim() || undefined,
+    chatBaseUrl,
     chatVision: yaml.models.chat.vision,
     chatVoiceNoteInput: yaml.models.chat.voice_note_input,
-    openaiBaseUrl,
     openaiApiKey,
 
     embeddingProvider,
@@ -272,13 +239,12 @@ export function loadConfigFromFile(
         ? "onnx-community/all-MiniLM-L6-v2-ONNX"
         : "text-embedding-3-small"),
     embeddingDimensions: yaml.models.embedding.dimensions,
+    embeddingBaseUrl,
 
     debounceIdleMs: yaml.harness.debounce.idle_ms,
     debounceMaxWaitMs: yaml.harness.debounce.max_wait_ms,
     systemPrompt: yaml.harness.system_prompt?.trim() || undefined,
     sessionIdleThresholdSec: yaml.harness.session_idle_threshold_sec,
-    workingRatio: yaml.harness.working_ratio,
-    reservedForOutputRatio: yaml.harness.reserved_for_output_ratio,
 
     drainPollIntervalMs: yaml.drain.poll_interval_ms,
 
@@ -304,32 +270,20 @@ export async function loadModels(cfg: DaemonConfig): Promise<{
 
   log.info(
     {
-      chatProvider: cfg.chatProvider,
       chatModel: cfg.chatModel,
-      ollamaHost: cfg.ollamaHost ?? "http://127.0.0.1:11434",
+      baseURL: cfg.chatBaseUrl,
     },
-    "loading chat model",
+    "loading chat model (openai-compatible)",
   );
 
-  let chatModel: LoadedChatModel;
-  if (cfg.chatProvider === "openai-compatible") {
-    chatModel = await loadOpenAICompatible({
-      model: cfg.chatModel,
-      baseURL: cfg.openaiBaseUrl!,
-      apiKey: cfg.openaiApiKey,
-      contextWindow: cfg.chatContextWindow,
-      vision: cfg.chatVision,
-      audioInput: cfg.chatVoiceNoteInput,
-    });
-  } else {
-    chatModel = await loadOllama({
-      model: cfg.chatModel,
-      host: cfg.ollamaHost,
-      contextWindow: cfg.chatContextWindow,
-      vision: cfg.chatVision,
-      audioInput: cfg.chatVoiceNoteInput,
-    });
-  }
+  const chatModel = await loadOpenAICompatible({
+    model: cfg.chatModel,
+    baseURL: cfg.chatBaseUrl,
+    apiKey: cfg.openaiApiKey,
+    contextWindow: cfg.chatContextWindow,
+    vision: cfg.chatVision,
+    audioInput: cfg.chatVoiceNoteInput,
+  });
   log.info({ chatModel: chatModel.id }, "chat model ready");
 
   log.info(
@@ -344,7 +298,7 @@ export async function loadModels(cfg: DaemonConfig): Promise<{
   if (cfg.embeddingProvider === "openai-compatible") {
     embeddingModel = await loadOpenAICompatibleEmbeddings({
       model: cfg.embeddingModel,
-      baseURL: cfg.openaiBaseUrl!,
+      baseURL: cfg.embeddingBaseUrl!,
       apiKey: cfg.openaiApiKey,
       dimensions: cfg.embeddingDimensions!,
     });

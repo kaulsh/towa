@@ -1,10 +1,6 @@
 import { z } from "zod";
 
-import type {
-  ChatMessage,
-  LoadedChatModel,
-  MessagePart,
-} from "../ai/types.js";
+import type { ChatMessage, LoadedChatModel, MessagePart } from "../ai/types.js";
 import type { WorkingContextTurn } from "../context-assembly/types.js";
 
 import { generateStructured } from "./structured.js";
@@ -112,7 +108,8 @@ Never ask the user to provide or re-send audio. Never mark insufficient to obtai
   ]
     .filter((s) => s.length > 0)
     .join("\n");
-  const mediaGuidanceBlock = mediaGuidance.length > 0 ? `\n${mediaGuidance}` : "";
+  const mediaGuidanceBlock =
+    mediaGuidance.length > 0 ? `\n${mediaGuidance}` : "";
 
   if (input.forceAnswer) {
     const system = `${input.systemPrompt}
@@ -132,7 +129,7 @@ Return JSON: { "answer": "..." }.`;
       mediaParts: input.mediaParts,
     });
 
-    const raw = await generateStructured(
+    const { value: raw, usage } = await generateStructured(
       chatModel,
       messages,
       AnswerOnlySchema,
@@ -140,7 +137,11 @@ Return JSON: { "answer": "..." }.`;
         schemaDescription: 'Return JSON {"answer":"..."}.',
       },
     );
-    return { insufficient: false, answer: raw.answer };
+    return {
+      insufficient: false,
+      answer: raw.answer,
+      ...(usage ? { usage } : {}),
+    };
   }
 
   const system = `${input.systemPrompt}
@@ -172,20 +173,27 @@ Otherwise return { "answer": "..." } (you may include "insufficient": false).`;
     mediaParts: input.mediaParts,
   });
 
-  const raw = await generateStructured(chatModel, messages, GateOutputSchema, {
-    schemaDescription:
-      'Return JSON either {"answer":"..."} or {"insufficient":true,"follow_up_queries":["memory search phrase",...]} — follow_up_queries are search strings, not questions to the user.',
-  });
+  const { value: raw, usage } = await generateStructured(
+    chatModel,
+    messages,
+    GateOutputSchema,
+    {
+      schemaDescription:
+        'Return JSON either {"answer":"..."} or {"insufficient":true,"follow_up_queries":["memory search phrase",...]} — follow_up_queries are search strings, not questions to the user.',
+    },
+  );
 
   if ("insufficient" in raw && raw.insufficient === true) {
     return {
       insufficient: true,
       followUpQueries: raw.follow_up_queries,
+      ...(usage ? { usage } : {}),
     };
   }
 
   return {
     insufficient: false,
     answer: (raw as { answer: string }).answer,
+    ...(usage ? { usage } : {}),
   };
 }

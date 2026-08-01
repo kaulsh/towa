@@ -48,11 +48,19 @@ export interface GenerateInput {
   schema?: ZodType;
 }
 
+/** Post-response usage from the provider (§8.3) — feeds the headroom governor. */
+export interface GenerateUsage {
+  promptTokens?: number;
+  completionTokens?: number;
+}
+
 export interface GenerateOutput {
   /** Generated text (always present; may be empty when only structured is used). */
   text: string;
   /** Parsed structured payload when `schema` was provided; otherwise absent. */
   structured?: unknown;
+  /** Present when the endpoint reports token usage. */
+  usage?: GenerateUsage;
 }
 
 export interface ChatModelCapabilities {
@@ -66,7 +74,6 @@ export interface LoadedChatModel {
   id: string;
   capabilities: ChatModelCapabilities;
   generate(input: GenerateInput): Promise<GenerateOutput>;
-  countTokens(text: string): Promise<number>;
 }
 
 export interface LoadedEmbeddingModel {

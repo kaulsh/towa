@@ -8,9 +8,8 @@ import type {
 } from "../ai/types.js";
 import {
   buildWorkingContext,
-  computeTokenBudgets,
   excludeTrailingUserTurns,
-  type ComputeTokenBudgetsOptions,
+  resolvePackingLimits,
   type WorkingContextTurn,
 } from "../context-assembly/index.js";
 import { getLogger } from "../logging.js";
@@ -28,7 +27,7 @@ export interface RunRetrievalAndGenerateInput {
   embeddingModel: LoadedEmbeddingModel;
   /**
    * Current user burst text (already persisted to raw_log before this turn).
-   * Passed separately so it is not also budgeted inside working-context.
+   * Passed separately so it is not also packed inside working-context.
    */
   message: string;
   /**
@@ -38,12 +37,16 @@ export interface RunRetrievalAndGenerateInput {
   mediaParts?: readonly MessagePart[];
   /**
    * Recent raw turns from the DB (may still include the current unanswered
-   * user burst). The pipeline strips that trailing user run before budgeting
+   * user burst). The pipeline strips that trailing user run before packing
    * the working-context window.
    */
   recentTurns: readonly WorkingContextTurn[];
   systemPrompt?: string;
-  budgetOptions?: ComputeTokenBudgetsOptions;
+  /**
+   * Previous turn's gate `usage.promptTokens` for this chat (§6 headroom).
+   * Cold start / missing → default top-K.
+   */
+  lastPromptTokens?: number;
   /** Override gate round cap (default GATE_MAX_ROUNDS = 3). */
   maxGateRounds?: number;
   /** Passed through to working-context session boundary (§6). */
@@ -59,6 +62,11 @@ export interface RunRetrievalAndGenerateResult {
   lastRetrieved: AssembledRetrievedContext;
   /** Prior conversation only — current user burst is `message`, not here. */
   workingContext: WorkingContextTurn[];
+  /**
+   * Prompt tokens from the last gate generate of this turn (when reported).
+   * Harness stores this for the next turn's headroom governor.
+   */
+  promptTokens?: number;
 }
 
 const DEFAULT_SYSTEM_PROMPT =
@@ -70,6 +78,8 @@ const DEFAULT_SYSTEM_PROMPT =
  *
  * Always runs: query-gen → multi-signal search → RRF → assemble → generate/gate.
  * On insufficient, loops with follow_up_queries, hard-capped at K rounds.
+ *
+ * Packing is fixed top-K (+ headroom tighten from `lastPromptTokens`).
  */
 export async function runRetrievalAndGenerate(
   input: RunRetrievalAndGenerateInput,
@@ -79,31 +89,36 @@ export async function runRetrievalAndGenerate(
   const nowSec = input.nowSec ?? Math.floor(Date.now() / 1000);
   const log = getLogger("retrieval");
 
-  const budgets = await computeTokenBudgets(
-    input.chatModel,
-    systemPrompt,
-    input.budgetOptions,
+  const limits = resolvePackingLimits(
+    input.chatModel.capabilities.contextWindow,
+    input.lastPromptTokens,
+  );
+  log.info(
+    {
+      workingTopK: limits.workingTopK,
+      retrievedTopK: limits.retrievedTopK,
+      tightened: limits.tightened,
+      headroomRatio: limits.headroomRatio,
+      lastPromptTokens: limits.lastPromptTokens,
+    },
+    "context packing limits",
   );
 
   // Current burst is already in raw_log / recentTurns; exclude it so the
-  // sliding window budgets prior conversation only. `input.message` (+ media)
+  // sliding window packs prior conversation only. `input.message` (+ media)
   // is the live user turn for query-gen and the gate.
   const priorTurns = excludeTrailingUserTurns(input.recentTurns);
-  const workingContext = await buildWorkingContext(
-    priorTurns,
-    input.chatModel,
-    {
-      budgetTokens: budgets.workingContext,
-      nowSec,
-      sessionIdleThresholdSec: input.sessionIdleThresholdSec,
-    },
-  );
+  const workingContext = buildWorkingContext(priorTurns, {
+    topK: limits.workingTopK,
+    sessionIdleThresholdSec: input.sessionIdleThresholdSec,
+  });
 
   let followUpQueries: string[] = [];
   let lastQueryGen: QueryGenResult | null = null;
   let lastRetrieved: AssembledRetrievedContext | null = null;
   let answer = "";
   let roundsUsed = 0;
+  let promptTokens: number | undefined;
 
   for (let round = 1; round <= maxRounds; round++) {
     roundsUsed = round;
@@ -125,12 +140,10 @@ export async function runRetrievalAndGenerate(
 
     const retrieved = await assembleRetrievedContext({
       db: input.db,
-      chatModel: input.chatModel,
       ranked,
       queryGen,
-      retrievedBudgetTokens: budgets.retrievedContext,
+      retrievedTopK: limits.retrievedTopK,
       nowSec,
-      // Soft hint may widen; explicit history_requests always load history.
       widenHistoryFromHint: queryGen.includeHistoryHint,
     });
     lastRetrieved = retrieved;
@@ -142,9 +155,12 @@ export async function runRetrievalAndGenerate(
       retrievedBlocks: retrieved.formattedBlocks,
       message: input.message,
       mediaParts: input.mediaParts,
-      // Hard cap: must answer with context on hand — no diagnostic stub to the user.
       forceAnswer,
     });
+
+    if (gate.usage?.promptTokens !== undefined) {
+      promptTokens = gate.usage.promptTokens;
+    }
 
     if (!gate.insufficient) {
       log.info(
@@ -153,6 +169,7 @@ export async function runRetrievalAndGenerate(
           forceAnswer,
           answerLen: gate.answer.length,
           answerPreview: gate.answer.slice(0, 80),
+          promptTokens,
         },
         "gate answered",
       );
@@ -164,6 +181,7 @@ export async function runRetrievalAndGenerate(
       {
         round,
         followUpQueries: gate.followUpQueries,
+        promptTokens,
       },
       "gate insufficient — another retrieval round",
     );
@@ -176,5 +194,6 @@ export async function runRetrievalAndGenerate(
     lastQueryGen: lastQueryGen!,
     lastRetrieved: lastRetrieved!,
     workingContext,
+    ...(promptTokens !== undefined ? { promptTokens } : {}),
   };
 }

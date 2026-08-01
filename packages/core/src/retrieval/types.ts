@@ -85,14 +85,22 @@ export interface AssembledRetrievedContext {
   formattedBlocks: string;
 }
 
+export interface GateUsage {
+  promptTokens?: number;
+  completionTokens?: number;
+}
+
 export interface GateSufficient {
   insufficient: false;
   answer: string;
+  /** Gate generate usage when the provider reported it (§8.3). */
+  usage?: GateUsage;
 }
 
 export interface GateInsufficient {
   insufficient: true;
   followUpQueries: string[];
+  usage?: GateUsage;
 }
 
 export type GateResult = GateSufficient | GateInsufficient;

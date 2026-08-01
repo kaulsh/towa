@@ -11,7 +11,7 @@ The daemon owns bot callbacks, `processNextExtraction`, the extraction poll loop
 - Node 22+ and pnpm 10
 - A Telegram bot token ([@BotFather](https://t.me/BotFather))
 - Your private chat id (allow-listed; single eternal chat)
-- A chat model endpoint — default is [Ollama](https://ollama.com) with `llama3.1:8b`
+- A chat model endpoint — any OpenAI-compatible `base_url` (required in YAML; e.g. Ollama, OpenAI, vLLM)
 - First run of local embeddings downloads the ONNX MiniLM model (CPU)
 
 ## Setup

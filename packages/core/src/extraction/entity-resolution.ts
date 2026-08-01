@@ -35,7 +35,14 @@ export interface EntityResolutionResult {
  * 2. Cross-episode candidate generation (fuzzy name + embedding NN + graph boost).
  * 3. Bounded LLM yes/no verification — bias toward NOT merging on ambiguity.
  *
- * TODO(maintenance): merge_entities(a, b) for healing false splits later.
+ * That bias can leave two KG nodes for one real entity (a false split). A false
+ * merge corrupts the graph and is hard to undo; a false split is self-healing
+ * via a later maintenance op `merge_entities(a, b)`: reassign edges onto a
+ * survivor, fold the discarded name into `aliases`, merge provenance/attributes,
+ * and retire the discarded node. Provenance still points at the raw log, so no
+ * facts are lost. Not part of this hot path — only a post-hoc heal for splits.
+ *
+ * TODO(maintenance): implement merge_entities(a, b).
  */
 export async function resolveEntities(
   db: Kysely<Database>,

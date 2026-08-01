@@ -70,7 +70,11 @@ Return JSON with keys: search_queries (string[]), entity_names (string[]), inclu
     { role: "user", content: user },
   ];
 
-  const raw = await generateStructured(chatModel, messages, QueryGenSchema);
+  const { value: raw } = await generateStructured(
+    chatModel,
+    messages,
+    QueryGenSchema,
+  );
 
   const historyRequests: HistoryRequest[] = (raw.history_requests ?? []).map(
     (h) => ({

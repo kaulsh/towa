@@ -1,15 +1,14 @@
 import OpenAI from "openai";
 import { zodResponseFormat } from "openai/helpers/zod";
-import { encodingForModel, getEncoding, type TiktokenModel } from "js-tiktoken";
 import { resolveContextWindow } from "../context-window-registry.js";
 import type {
   ChatMessage,
   GenerateInput,
   GenerateOutput,
+  GenerateUsage,
   LoadedChatModel,
   LoadedEmbeddingModel,
 } from "../types.js";
-import { estimateTokens } from "./estimate-tokens.js";
 import { transcribeOpenAICompatible } from "./openai-transcribe.js";
 import {
   assertGenerateCapabilities,
@@ -21,7 +20,7 @@ import type { MessagePart } from "../types.js";
 export interface OpenAICompatibleConfig {
   /** Model id as understood by the remote endpoint. */
   model: string;
-  /** OpenAI-compatible API base URL. */
+  /** OpenAI-compatible API base URL (e.g. Ollama `http://127.0.0.1:11434/v1`). */
   baseURL: string;
   /** API key; many local servers accept any non-empty string. */
   apiKey?: string;
@@ -34,12 +33,6 @@ export interface OpenAICompatibleConfig {
   structuredOutput?: boolean;
   vision?: boolean;
   audioInput?: boolean;
-  /**
-   * Optional tiktoken model name for exact-ish counting.
-   * When omitted, tries `config.model` then falls back to cl100k_base /
-   * the bundled estimator.
-   */
-  tiktokenModel?: string;
 }
 
 export interface OpenAICompatibleEmbeddingsConfig {
@@ -106,18 +99,20 @@ function toOpenAIMessages(
   });
 }
 
-function countWithTiktoken(modelHint: string, text: string): number | null {
-  try {
-    const enc = encodingForModel(modelHint as TiktokenModel);
-    return enc.encode(text).length;
-  } catch {
-    try {
-      // cl100k_base covers most OpenAI-shaped chat models.
-      return getEncoding("cl100k_base").encode(text).length;
-    } catch {
-      return null;
-    }
+function usageFromCompletion(
+  usage: OpenAI.Completions.CompletionUsage | null | undefined,
+): GenerateUsage | undefined {
+  if (!usage) return undefined;
+  const out: GenerateUsage = {};
+  if (typeof usage.prompt_tokens === "number") {
+    out.promptTokens = usage.prompt_tokens;
   }
+  if (typeof usage.completion_tokens === "number") {
+    out.completionTokens = usage.completion_tokens;
+  }
+  return out.promptTokens !== undefined || out.completionTokens !== undefined
+    ? out
+    : undefined;
 }
 
 function collectAudioParts(
@@ -134,7 +129,7 @@ function collectAudioParts(
 }
 
 /**
- * Universal remote/server chat escape hatch (§8.2), parameterized by `baseURL`.
+ * Sole chat loader (§8.2) — OpenAI-compatible HTTP, including Ollama `/v1`.
  */
 export async function loadOpenAICompatible(
   config: OpenAICompatibleConfig,
@@ -161,10 +156,11 @@ export async function loadOpenAICompatible(
     async generate(input: GenerateInput): Promise<GenerateOutput> {
       assertGenerateCapabilities(capabilities, input);
 
-      // Voice transcription via /v1/audio/transcriptions (same as Ollama path).
+      // Voice transcription via /v1/audio/transcriptions.
       const audioParts = collectAudioParts(input.messages);
       if (audioParts.length > 0) {
         const transcripts: string[] = [];
+
         for (const part of audioParts) {
           const transcribed = await transcribeOpenAICompatible({
             baseURL: config.baseURL,
@@ -175,7 +171,9 @@ export async function loadOpenAICompatible(
           });
           transcripts.push(transcribed);
         }
+
         const text = transcripts.filter((t) => t.length > 0).join("\n\n");
+
         if (input.schema === undefined) {
           return { text };
         }
@@ -192,11 +190,19 @@ export async function loadOpenAICompatible(
           messages: toOpenAIMessages(input.messages),
           response_format: zodResponseFormat(input.schema, "output"),
         });
+
         const text = completion.choices[0]?.message?.content ?? "";
+
+        const usage = usageFromCompletion(completion.usage);
+
         try {
-          return { text, structured: parseStructuredText(text, input.schema) };
+          return {
+            text,
+            structured: parseStructuredText(text, input.schema),
+            ...(usage ? { usage } : {}),
+          };
         } catch {
-          return { text };
+          return { text, ...(usage ? { usage } : {}) };
         }
       }
 
@@ -204,12 +210,12 @@ export async function loadOpenAICompatible(
         model: config.model,
         messages: toOpenAIMessages(input.messages),
       });
+
       const text = completion.choices[0]?.message?.content ?? "";
-      return { text };
-    },
-    async countTokens(text: string): Promise<number> {
-      const hint = config.tiktokenModel ?? config.model;
-      return countWithTiktoken(hint, text) ?? estimateTokens(text);
+
+      const usage = usageFromCompletion(completion.usage);
+
+      return { text, ...(usage ? { usage } : {}) };
     },
   };
 

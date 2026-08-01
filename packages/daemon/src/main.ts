@@ -61,12 +61,6 @@ export async function runDaemon(configFilePath: string): Promise<void> {
       maxWaitMs: cfg.debounceMaxWaitMs,
     },
     sessionIdleThresholdSec: cfg.sessionIdleThresholdSec,
-    budgetOptions: {
-      workingRatio: cfg.workingRatio,
-      reservedForOutput: Math.floor(
-        chatModel.capabilities.contextWindow * cfg.reservedForOutputRatio,
-      ),
-    },
   });
 
   harness.onTurnCompleted(async (result) => {

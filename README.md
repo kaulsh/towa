@@ -2,14 +2,6 @@
 
 Telegram-native AI agent harness built around durable long-term memory recall.
 
-## Workspace
-
-```
-packages/core/     # @towa/core — harness, DB, models, Telegram runtime, logging
-packages/daemon/   # @towa/daemon — Telegram daemon + `towa` CLI bin
-evals/             # @towa/evals scaffolding
-```
-
 ## Development
 
 ```bash

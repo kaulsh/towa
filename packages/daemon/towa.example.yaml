@@ -19,19 +19,15 @@ telegram:
 
 models:
   chat:
-    provider: ollama # ollama | openai-compatible
+    # OpenAI-compatible only (§8.2). model + base_url are required
+    # (no implicit endpoint — use a recipe / fill in your server).
     model: gemma4:e4b
-    # context_window: 8192
+    base_url: http://127.0.0.1:11434/v1
+    # context_window: 128000  # required if model id is unknown to the registry
     # Multimodal capability flags (§7.3 / §8.1). Default false = durable
     # "media present" notes only (no image/voice content in the reply path).
-    # vision: true            # image captioning / generate with image parts
-    # voice_note_input: true  # Telegram voice notes via /v1/audio/transcriptions
-    #                         # (music / file audio uploads stay unsupported)
     vision: true
     voice_note_input: true
-    # ollama_host: http://127.0.0.1:11434
-    # openai:
-    #   base_url: https://api.openai.com/v1
   embedding:
     provider: local # local | openai-compatible
     model: onnx-community/all-MiniLM-L6-v2-ONNX
@@ -45,8 +41,6 @@ harness:
     idle_ms: 800
     max_wait_ms: 5000
   session_idle_threshold_sec: 7200
-  working_ratio: 0.5
-  reserved_for_output_ratio: 0.2
 
 drain:
   poll_interval_ms: 1000

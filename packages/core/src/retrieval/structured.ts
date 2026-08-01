@@ -2,29 +2,40 @@ import type { ZodType } from "zod";
 
 import type {
   ChatMessage,
+  GenerateUsage,
   LoadedChatModel,
 } from "../ai/types.js";
+
+export interface StructuredGenerateResult<T> {
+  value: T;
+  usage?: GenerateUsage;
+}
 
 /**
  * Structured-output helper with capability fallback (§8.1).
  *
  * When `capabilities.structuredOutput` is true, pass the Zod schema through
  * `generate()`. Otherwise: prompt for JSON, parse, validate; on failure retry
- * once with the parse error included.
+ * once with the parse error included. Forwards provider usage when present.
  */
 export async function generateStructured<T>(
   chatModel: LoadedChatModel,
   messages: ChatMessage[],
   schema: ZodType<T>,
   options: { schemaDescription?: string } = {},
-): Promise<T> {
+): Promise<StructuredGenerateResult<T>> {
   if (chatModel.capabilities.structuredOutput) {
     const out = await chatModel.generate({ messages, schema });
     if (out.structured !== undefined) {
-      return schema.parse(out.structured);
+      return {
+        value: schema.parse(out.structured),
+        ...(out.usage ? { usage: out.usage } : {}),
+      };
     }
-    // Some loaders may only put JSON in text even when structuredOutput is claimed.
-    return parseAndValidate(out.text, schema);
+    return {
+      value: parseAndValidate(out.text, schema),
+      ...(out.usage ? { usage: out.usage } : {}),
+    };
   }
 
   const schemaHint =
@@ -40,7 +51,10 @@ export async function generateStructured<T>(
 
   const first = await chatModel.generate({ messages: prompted });
   try {
-    return parseAndValidate(first.text, schema);
+    return {
+      value: parseAndValidate(first.text, schema),
+      ...(first.usage ? { usage: first.usage } : {}),
+    };
   } catch (err) {
     const detail = err instanceof Error ? err.message : String(err);
     const retry: ChatMessage[] = [
@@ -52,7 +66,10 @@ export async function generateStructured<T>(
       },
     ];
     const second = await chatModel.generate({ messages: retry });
-    return parseAndValidate(second.text, schema);
+    return {
+      value: parseAndValidate(second.text, schema),
+      ...(second.usage ? { usage: second.usage } : {}),
+    };
   }
 }
 

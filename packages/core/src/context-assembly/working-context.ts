@@ -1,20 +1,16 @@
-import type { LoadedChatModel } from "../ai/types.js";
-
 import {
   DEFAULT_SESSION_IDLE_THRESHOLD_SEC,
   type WorkingContextTurn,
 } from "./types.js";
 
 export interface BuildWorkingContextOptions {
-  /** Token budget for the working-context window (from computeTokenBudgets). */
-  budgetTokens: number;
+  /** Max prior turns to keep (newest first), after session boundary (§6). */
+  topK: number;
   /**
    * Idle gap (seconds) that resets the buffer rather than sliding.
    * Default: 2 hours (§6).
    */
   sessionIdleThresholdSec?: number;
-  /** Reference "now" for the newest turn; defaults to last turn's timestamp. */
-  nowSec?: number;
 }
 
 /**
@@ -23,7 +19,7 @@ export interface BuildWorkingContextOptions {
  * Inbound messages are persisted before the retrieval/generation turn, so the
  * current burst already sits at the end of `recentTurns`. The harness passes
  * that burst separately as `message` (+ media); keeping it in the working-
- * context window would double-count it in budgets and chat history (§6).
+ * context window would double-count it in chat history (§6).
  */
 export function excludeTrailingUserTurns(
   turns: readonly WorkingContextTurn[],
@@ -36,23 +32,21 @@ export function excludeTrailingUserTurns(
 }
 
 /**
- * Build a token-budgeted working-context buffer (§6).
+ * Build a fixed top-K working-context buffer (§6).
  *
  * Callers should pass turns that already exclude the current unanswered user
  * burst (`excludeTrailingUserTurns`) — that text is supplied separately as
  * the live `message`.
  *
  * - Session boundary: an idle gap beyond the threshold drops earlier turns.
- * - Sliding window: keep the most recent turns that fit `budgetTokens`,
- *   measured via the active model's `countTokens()` — never a turn count.
+ * - Sliding window: keep the most recent `topK` turns (no token pre-count).
  * - Turns that age out are dropped, not summarized.
  */
-export async function buildWorkingContext(
+export function buildWorkingContext(
   turns: readonly WorkingContextTurn[],
-  chatModel: LoadedChatModel,
   options: BuildWorkingContextOptions,
-): Promise<WorkingContextTurn[]> {
-  if (turns.length === 0 || options.budgetTokens <= 0) {
+): WorkingContextTurn[] {
+  if (turns.length === 0 || options.topK <= 0) {
     return [];
   }
 
@@ -63,31 +57,15 @@ export async function buildWorkingContext(
   );
   const sessionTurns = applySessionBoundary(sorted, threshold);
 
-  // Walk newest → oldest, accumulate until budget is exhausted.
-  const selected: WorkingContextTurn[] = [];
-  let used = 0;
-
-  for (let i = sessionTurns.length - 1; i >= 0; i--) {
-    const turn = sessionTurns[i]!;
-    const cost = await chatModel.countTokens(formatTurnForBudget(turn));
-    if (selected.length > 0 && used + cost > options.budgetTokens) {
-      break;
-    }
-    // Always include at least the newest prior turn even if it alone exceeds
-    // budget; subsequent older turns are skipped.
-    if (selected.length === 0 || used + cost <= options.budgetTokens) {
-      selected.push(turn);
-      used += cost;
-    }
+  if (sessionTurns.length <= options.topK) {
+    return sessionTurns;
   }
-
-  selected.reverse();
-  return selected;
+  return sessionTurns.slice(sessionTurns.length - options.topK);
 }
 
 /**
  * Drop turns before the most recent idle gap exceeding the threshold.
- * If no gap qualifies, the full sequence is kept (then token-trimmed).
+ * If no gap qualifies, the full sequence is kept (then top-K trimmed).
  */
 export function applySessionBoundary(
   turnsAscending: readonly WorkingContextTurn[],
@@ -107,8 +85,4 @@ export function applySessionBoundary(
   }
 
   return turnsAscending.slice(sessionStartIdx);
-}
-
-function formatTurnForBudget(turn: WorkingContextTurn): string {
-  return `${turn.role}: ${turn.content}`;
 }

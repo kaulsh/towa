@@ -22,11 +22,8 @@
   "dependencies": {
     "@huggingface/transformers": "^4.2.0",
     "better-sqlite3": "^11.10.0",
-    "js-tiktoken": "^1.0.21",
     "kysely": "^0.28.2",
-    "node-llama-cpp": "^3.19.0",
     "ogg-opus-decoder": "^1.7.3",
-    "ollama": "^0.6.3",
     "openai": "^6.46.0",
     "pino": "^9.7.0",
     "sqlite-vec": "^0.1.7-alpha.2",

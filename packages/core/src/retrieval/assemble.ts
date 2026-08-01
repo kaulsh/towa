@@ -1,7 +1,6 @@
 import type { Kysely } from "kysely";
 
 import type { Database } from "../db/types.js";
-import type { LoadedChatModel } from "../ai/types.js";
 import { resolveTurnsForIdRange } from "../raw-log/index.js";
 
 import {
@@ -20,11 +19,10 @@ import type {
 
 export interface AssembleRetrievedContextInput {
   db: Kysely<Database>;
-  chatModel: LoadedChatModel;
   ranked: readonly RrfScoredEpisode[];
   queryGen: QueryGenResult;
-  /** Token budget for retrieved context — measured via countTokens. */
-  retrievedBudgetTokens: number;
+  /** Max RRF-ranked episodes to include (§5.2 fixed top-K). */
+  retrievedTopK: number;
   nowSec?: number;
   /**
    * When true (soft hint only), also attach historical facts for entity_names
@@ -36,36 +34,28 @@ export interface AssembleRetrievedContextInput {
 /**
  * Resolve RRF-ranked episodes to verbatim raw turns + KG facts (§5.2 step 4, §5.3).
  *
- * Episodes are added in rank order until the retrieved-context budget
- * (via countTokens) is exhausted. Current vs historical facts are presented
- * as distinct labeled blocks.
+ * Episodes are added in rank order up to `retrievedTopK` (no token pre-count).
+ * Current vs historical facts are presented as distinct labeled blocks.
  */
 export async function assembleRetrievedContext(
   input: AssembleRetrievedContextInput,
 ): Promise<AssembledRetrievedContext> {
   const nowSec = input.nowSec ?? Math.floor(Date.now() / 1000);
   const episodes: EpisodeTurns[] = [];
-  let usedTokens = 0;
+  const limit = Math.max(0, input.retrievedTopK);
 
   for (const scored of input.ranked) {
+    if (episodes.length >= limit) {
+      break;
+    }
     const turns = await loadEpisodeTurns(input.db, scored.episodeId);
     if (turns.turns.length === 0) {
       continue;
     }
-    const block = formatEpisodeBlock(turns);
-    const cost = await input.chatModel.countTokens(block);
-    if (episodes.length > 0 && usedTokens + cost > input.retrievedBudgetTokens) {
-      break;
-    }
-    if (episodes.length === 0 || usedTokens + cost <= input.retrievedBudgetTokens) {
-      episodes.push(turns);
-      usedTokens += cost;
-    }
+    episodes.push(turns);
   }
 
-  const edgeIds = [
-    ...new Set(input.ranked.flatMap((r) => r.edgeIds)),
-  ];
+  const edgeIds = [...new Set(input.ranked.flatMap((r) => r.edgeIds))];
 
   const currentFromEdges = await loadCurrentFactsByEdgeIds(
     input.db,
@@ -82,9 +72,7 @@ export async function assembleRetrievedContext(
     ...currentFromEntities,
   ]);
 
-  const historyRequests: HistoryRequest[] = [
-    ...input.queryGen.historyRequests,
-  ];
+  const historyRequests: HistoryRequest[] = [...input.queryGen.historyRequests];
   if (
     input.widenHistoryFromHint &&
     input.queryGen.includeHistoryHint &&
@@ -99,8 +87,6 @@ export async function assembleRetrievedContext(
   const historicalFacts: KgFact[] = [];
   for (const req of historyRequests) {
     const timeline = await getHistory(input.db, req, nowSec);
-    // Explicit history path returns full timeline; keep non-current (and
-    // current ones already covered above stay in currentFacts).
     for (const fact of timeline) {
       if (!fact.isCurrent) {
         historicalFacts.push(fact);
@@ -109,7 +95,11 @@ export async function assembleRetrievedContext(
   }
 
   const uniqueHistorical = dedupeFacts(historicalFacts);
-  const formattedBlocks = formatRetrievedBlocks(episodes, currentFacts, uniqueHistorical);
+  const formattedBlocks = formatRetrievedBlocks(
+    episodes,
+    currentFacts,
+    uniqueHistorical,
+  );
 
   return {
     episodes,
@@ -133,8 +123,6 @@ async function loadEpisodeTurns(
     return { episodeId, turns: [] };
   }
 
-  // Edit-aware: fold media_artifact / user edits whose ids sit outside the
-  // episode range into the original turn ids (§2.1 / Track F).
   const resolved = await resolveTurnsForIdRange(
     db,
     episode.start_msg_id,
@@ -158,8 +146,7 @@ function formatEpisodeBlock(ep: EpisodeTurns): string {
 }
 
 function formatFactLine(fact: KgFact): string {
-  const object =
-    fact.objectName ?? fact.objectLiteral ?? "(unknown)";
+  const object = fact.objectName ?? fact.objectLiteral ?? "(unknown)";
   const window = fact.isCurrent
     ? "current"
     : `valid ${fact.validFrom}→${fact.validTo}`;
@@ -191,8 +178,7 @@ export function formatRetrievedBlocks(
 
   if (historicalFacts.length > 0) {
     parts.push(
-      "## Historical facts\n" +
-        historicalFacts.map(formatFactLine).join("\n"),
+      "## Historical facts\n" + historicalFacts.map(formatFactLine).join("\n"),
     );
   }
 
