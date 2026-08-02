@@ -7,7 +7,9 @@
   "scripts": {
     "typecheck": "pnpm --stream --filter @towa/* run typecheck",
     "build": "pnpm --stream --filter @towa/* build",
-    "dev": "export FORCE_COLOR=1 && pnpm run build && pnpm --stream --parallel --filter @towa/* dev"
+    "dev": "export FORCE_COLOR=1 && pnpm run build && pnpm --stream --parallel --filter @towa/* dev",
+    "daemon": "export FORCE_COLOR=1 && pnpm --stream --filter @towa/daemon start",
+    "cli": "pnpm --filter @towa/daemon cli"
   },
   "keywords": [],
   "author": "",
