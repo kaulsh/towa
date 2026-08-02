@@ -18,13 +18,9 @@ import {
 } from "@towa/core";
 
 import { loadConfigFromFile, loadModels } from "./config.js";
+import { CONTROL_HOST } from "./control.js";
 import { startControlServer } from "./control-server.js";
 import { startExtractionDrainLoop } from "./drain-loop.js";
-import {
-  defaultRuntimeStatePath,
-  removeRuntimeState,
-  writeRuntimeState,
-} from "./runtime-state.js";
 
 export async function runDaemon(configFilePath: string): Promise<void> {
   const cfg = loadConfigFromFile(configFilePath);
@@ -85,9 +81,8 @@ export async function runDaemon(configFilePath: string): Promise<void> {
     try {
       await control.close();
     } catch (err) {
-      log.warn({ err }, "control se rver close failed");
+      log.warn({ err }, "control server close failed");
     }
-    removeRuntimeState(runtimePath);
     await telegram.stop();
     await harness.clear();
     await drain.stop();
@@ -95,10 +90,8 @@ export async function runDaemon(configFilePath: string): Promise<void> {
     process.exit(0);
   }
 
-  const runtimePath = defaultRuntimeStatePath();
-
   const control = await startControlServer({
-    host: cfg.control.host,
+    host: CONTROL_HOST,
     port: cfg.control.port,
     token: cfg.control.token,
     logPath: cfg.logging.filePath,
@@ -123,20 +116,6 @@ export async function runDaemon(configFilePath: string): Promise<void> {
     onStop: () => shutdown("control-stop"),
   });
 
-  writeRuntimeState(
-    {
-      pid: process.pid,
-      host: control.host,
-      port: control.port,
-      token: cfg.control.token,
-      logPath: cfg.logging.filePath,
-      configFilePath: cfg.configFilePath,
-      dbPath: cfg.dbPath,
-      startedAt: new Date().toISOString(),
-    },
-    runtimePath,
-  );
-
   process.once("SIGINT", () => void shutdown("SIGINT"));
   process.once("SIGTERM", () => void shutdown("SIGTERM"));
 
@@ -145,8 +124,7 @@ export async function runDaemon(configFilePath: string): Promise<void> {
   log.info(
     {
       chatId: cfg.telegramChatId,
-      control: `${control.host}:${control.port}`,
-      runtimeState: runtimePath,
+      control: `${CONTROL_HOST}:${control.port}`,
     },
     "daemon up",
   );

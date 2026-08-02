@@ -18,7 +18,8 @@
     "dev:node": "node --watch-path=./dist --watch-path=./towa.yaml --watch-preserve-output --enable-source-maps --inspect=127.0.0.1:11001 dist/main.js | pino-pretty --config .pino-prettyrc",
     "dev": "run-p build:w dev:node",
     "start": "node --enable-source-maps dist/main.js | pino-pretty --config .pino-prettyrc",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "cli": "node --enable-source-maps dist/cli.js"
   },
   "dependencies": {
     "@towa/core": "workspace:*",

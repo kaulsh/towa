@@ -51,6 +51,7 @@ logging:
   stdout: true
 
 control:
-  host: 127.0.0.1
-  port: 7432
+  # Optional; default is 18741 (see control.ts). CLI needs --port or
+  # TOWA_CONTROL_PORT if you change this.
+  # port: 18741
   # token: optional; or set TOWA_CONTROL_TOKEN in the environment

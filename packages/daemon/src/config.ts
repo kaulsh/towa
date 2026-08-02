@@ -12,6 +12,8 @@ import {
   type TelegramWebhookConfig,
 } from "@towa/core";
 
+import { resolveControlPort } from "./control.js";
+
 const EmbeddingProviderSchema = z.enum(["local", "openai-compatible"]);
 
 const YamlConfigSchema = z.object({
@@ -86,11 +88,11 @@ const YamlConfigSchema = z.object({
     .default({ max_bytes: 10 * 1024 * 1024, stdout: true }),
   control: z
     .object({
-      host: z.string().default("127.0.0.1"),
-      port: z.number().int().positive().default(7432),
+      /** Optional override of the fixed default (§ control.ts). */
+      port: z.number().int().positive().optional(),
       token: z.string().optional(),
     })
-    .default({ host: "127.0.0.1", port: 7432 }),
+    .default({}),
 });
 
 export type YamlConfig = z.infer<typeof YamlConfigSchema>;
@@ -130,7 +132,6 @@ export interface DaemonConfig {
   };
 
   control: {
-    host: string;
     port: number;
     token?: string;
   };
@@ -255,8 +256,7 @@ export function loadConfigFromFile(
     },
 
     control: {
-      host: yaml.control.host,
-      port: yaml.control.port,
+      port: resolveControlPort({ yamlPort: yaml.control.port, env }),
       token: controlToken,
     },
   };

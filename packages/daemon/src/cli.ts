@@ -10,22 +10,23 @@
 import { resolve } from "node:path";
 
 import {
-  defaultRuntimeStatePath,
-  readRuntimeState,
-  type RuntimeState,
-} from "./runtime-state.js";
+  CONTROL_HOST,
+  DEFAULT_CONTROL_PORT,
+  daemonNotRunningMessage,
+  resolveControlPort,
+} from "./control.js";
 import { runDaemon } from "./main.js";
 
 function usage(exitCode = 1): never {
   console.error(`Usage:
   towa run --config-file <path>
-  towa ping
-  towa status
-  towa stop
-  towa logs [--lines <n>] [--no-follow]
+  towa ping [--port <n>]
+  towa status [--port <n>]
+  towa stop [--port <n>]
+  towa logs [--lines <n>] [--no-follow] [--port <n>]
 
-Control commands talk to the running daemon over localhost HTTP
-(runtime state: ${defaultRuntimeStatePath()}).
+Control commands talk to the daemon at http://${CONTROL_HOST}:${DEFAULT_CONTROL_PORT}
+(override with --port or TOWA_CONTROL_PORT).
 `);
   process.exit(exitCode);
 }
@@ -33,6 +34,7 @@ Control commands talk to the running daemon over localhost HTTP
 function parseArgs(argv: string[]): {
   command: string;
   configFile?: string;
+  port?: number;
   lines?: number;
   follow: boolean;
 } {
@@ -40,6 +42,7 @@ function parseArgs(argv: string[]): {
   if (!command) usage();
 
   let configFile: string | undefined;
+  let port: number | undefined;
   let lines: number | undefined;
   let follow = true;
 
@@ -52,6 +55,15 @@ function parseArgs(argv: string[]): {
         usage();
       }
       configFile = next;
+      continue;
+    }
+    if (arg === "--port" || arg === "-p") {
+      const next = rest[++i];
+      if (!next || !Number.isFinite(Number(next)) || Number(next) <= 0) {
+        console.error("Missing positive integer value for --port");
+        usage();
+      }
+      port = Math.trunc(Number(next));
       continue;
     }
     if (arg === "--lines") {
@@ -74,68 +86,110 @@ function parseArgs(argv: string[]): {
     usage();
   }
 
-  return { command, configFile, lines, follow };
+  return { command, configFile, port, lines, follow };
 }
 
-function authHeaders(state: RuntimeState): Record<string, string> {
-  if (!state.token) return {};
-  return { Authorization: `Bearer ${state.token}` };
+function authHeaders(): Record<string, string> {
+  const token = process.env.TOWA_CONTROL_TOKEN?.trim();
+  if (!token) return {};
+  return { Authorization: `Bearer ${token}` };
+}
+
+function isConnectionFailure(err: unknown): boolean {
+  if (!(err instanceof Error)) return false;
+  const cause = (err as Error & { cause?: unknown }).cause;
+  const candidates = [err, cause].filter(Boolean) as Error[];
+  for (const e of candidates) {
+    const code = (e as NodeJS.ErrnoException).code;
+    if (
+      code === "ECONNREFUSED" ||
+      code === "ENOTFOUND" ||
+      code === "EHOSTUNREACH" ||
+      code === "ENETUNREACH"
+    ) {
+      return true;
+    }
+    if (/fetch failed|ECONNREFUSED|network/i.test(e.message)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+async function withDaemonReachable<T>(
+  port: number,
+  run: () => Promise<T>,
+): Promise<T> {
+  try {
+    return await run();
+  } catch (err) {
+    if (isConnectionFailure(err)) {
+      throw new Error(daemonNotRunningMessage(port), { cause: err });
+    }
+    throw err;
+  }
 }
 
 async function postCommand(
-  state: RuntimeState,
+  port: number,
   command: string,
   args: Record<string, unknown> = {},
 ): Promise<unknown> {
-  const url = `http://${state.host}:${state.port}/command`;
-  const res = await fetch(url, {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      ...authHeaders(state),
-    },
-    body: JSON.stringify({ command, args }),
+  return withDaemonReachable(port, async () => {
+    const url = `http://${CONTROL_HOST}:${port}/command`;
+    const res = await fetch(url, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        ...authHeaders(),
+      },
+      body: JSON.stringify({ command, args }),
+    });
+    const text = await res.text();
+    let body: unknown = text;
+    try {
+      body = JSON.parse(text) as unknown;
+    } catch {
+      // keep text
+    }
+    if (!res.ok) {
+      throw new Error(
+        `POST /command ${command} failed HTTP ${res.status}: ${text.slice(0, 500)}`,
+      );
+    }
+    return body;
   });
-  const text = await res.text();
-  let body: unknown = text;
-  try {
-    body = JSON.parse(text) as unknown;
-  } catch {
-    // keep text
-  }
-  if (!res.ok) {
-    throw new Error(
-      `POST /command ${command} failed HTTP ${res.status}: ${text.slice(0, 500)}`,
-    );
-  }
-  return body;
 }
 
 async function streamLogs(
-  state: RuntimeState,
+  port: number,
   lines: number,
   follow: boolean,
 ): Promise<void> {
-  const params = new URLSearchParams();
-  params.set("lines", String(lines));
-  params.set("follow", follow ? "1" : "0");
-  const url = `http://${state.host}:${state.port}/logs?${params}`;
+  await withDaemonReachable(port, async () => {
+    const params = new URLSearchParams();
+    params.set("lines", String(lines));
+    params.set("follow", follow ? "1" : "0");
+    const url = `http://${CONTROL_HOST}:${port}/logs?${params}`;
 
-  const res = await fetch(url, {
-    headers: authHeaders(state),
+    const res = await fetch(url, {
+      headers: authHeaders(),
+    });
+    if (!res.ok || !res.body) {
+      const text = await res.text();
+      throw new Error(
+        `GET /logs failed HTTP ${res.status}: ${text.slice(0, 500)}`,
+      );
+    }
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      process.stdout.write(decoder.decode(value, { stream: true }));
+    }
   });
-  if (!res.ok || !res.body) {
-    const text = await res.text();
-    throw new Error(`GET /logs failed HTTP ${res.status}: ${text.slice(0, 500)}`);
-  }
-
-  const reader = res.body.getReader();
-  const decoder = new TextDecoder();
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    process.stdout.write(decoder.decode(value, { stream: true }));
-  }
 }
 
 async function main(): Promise<void> {
@@ -144,7 +198,8 @@ async function main(): Promise<void> {
     usage(argv.length === 0 ? 1 : 0);
   }
 
-  const { command, configFile, lines, follow } = parseArgs(argv);
+  const { command, configFile, port: cliPort, lines, follow } = parseArgs(argv);
+  const port = resolveControlPort({ cliPort });
 
   if (command === "run") {
     if (!configFile) {
@@ -156,28 +211,26 @@ async function main(): Promise<void> {
     return;
   }
 
-  const state = readRuntimeState();
-
   if (command === "ping") {
-    const body = await postCommand(state, "ping");
+    const body = await postCommand(port, "ping");
     console.log(JSON.stringify(body, null, 2));
     return;
   }
 
   if (command === "status") {
-    const body = await postCommand(state, "status");
+    const body = await postCommand(port, "status");
     console.log(JSON.stringify(body, null, 2));
     return;
   }
 
   if (command === "stop") {
-    const body = await postCommand(state, "stop");
+    const body = await postCommand(port, "stop");
     console.log(JSON.stringify(body, null, 2));
     return;
   }
 
   if (command === "logs") {
-    await streamLogs(state, lines ?? 200, follow);
+    await streamLogs(port, lines ?? 200, follow);
     return;
   }
 
