@@ -4,7 +4,7 @@ import type {
   ChatMessage,
   GenerateUsage,
   LoadedChatModel,
-} from "../ai/types.js";
+} from "./types.js";
 
 export interface StructuredGenerateResult<T> {
   value: T;

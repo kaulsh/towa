@@ -33,7 +33,8 @@ These are correctness/thesis-preserving rules. Do not "helpfully" optimize aroun
 - **Raw log is append-only.** Never `UPDATE` or `DELETE` a `raw_log` row. Edits and deletes are new appended rows referencing the original. (§2.1)
 - **`valid_to` always uses the far-future sentinel for open edges — never `NULL`.** Every temporal query must be a uniform `valid_from <= now AND now < valid_to`. (§2.3)
 - **No LLM call runs inside an open SQLite write transaction.** Compute extraction results first, then open a short transaction just to commit them. Holds inside daemon `processNextExtraction` / core `runExtraction` (§4.2).
-- **Retrieval is a forced pipeline, not an optional tool call.** Query-gen → multi-signal search → gate must always run; never let a model "decide" whether to search. (§5.1)
+- **Retrieval is a forced pipeline, not an optional tool call.** Query-gen → multi-signal search → memory sufficiency assess must always run; never let a model "decide" whether to search memory. Non-memory tools (web/FS) attach only to the separate answer generate. (§5.1, §5.4)
+- **Agent tools are built-in + config-gated only.** Fixed tool set (`web_search`, `web_fetch`, `fs_*`); enable via daemon YAML. No user-defined tools / plugin registry. (§5.4)
 - **Every episode gets a gist + embedding unconditionally** — never gated on whether extraction judged the episode "important." This is what makes the sliding context window safe to drop turns from. (§2.4, §6)
 - **KG writes are durable personal facts only** — fact-level salience (identity, preferences, people/places, plans, lasting attributes); never gate the gist on importance. (§2.3, §2.4, §4)
 - **Entity resolution is biased toward *not* merging on ambiguity.** Create a new node over a speculative merge; false splits are fixable later via `merge_entities`, false merges corrupt the graph. (§4.3)
@@ -42,7 +43,8 @@ These are correctness/thesis-preserving rules. Do not "helpfully" optimize aroun
 - **Model interfaces stay segregated:** `LoadedChatModel` and `LoadedEmbeddingModel` are separate types. Don't reintroduce an optional `embed()` on a chat model or vice versa. (§8.1)
 - **Telegram owns transport; harness is programmatic.** The harness never registers bot callbacks, owns Telegraf, injects `send`, or starts an extraction poll loop. Daemon wires `telegram.start((msg) → handleTurn)`, `harness.onTurnCompleted` → `telegram.send`, owns `processNextExtraction` (composes core `runExtraction` + queue helpers) and its drain loop — no `fetchMedia` port; enrichment reads the process-local media-byte cache filled on inbound download. Core is library-like: no long-running process starters. (§7.1, §7.3)
 - **Check `capabilities.audioInput` / `capabilities.vision` before routing media into a model call.** Never assume multimodal support — degrade to recording that media existed, without content, when the active model lacks the relevant capability. (§7.3, §8.1)
-- **Context packing is fixed top-K + headroom governor — no pre-call `countTokens()`.** Working turns and retrieved episodes use code-default top-K (not YAML); tighten next turn from last gate `usage.promptTokens` vs `capabilities.contextWindow`. Do not reintroduce tiktoken/estimators or fill-until-token-budget packing (§5.2, §6, §8.3).
+- **Context packing is fixed top-K + usage-relative headroom governor — no pre-call `countTokens()`.** Working turns and retrieved episodes use code-default top-K (not YAML); tighten next turn from consecutive **answer** `usage.promptTokens` (rise / sticky / drop) — never from an absolute `contextWindow`. Do not reintroduce tiktoken/estimators, fill-until-token-budget packing, or a context-window registry (§5.2, §6, §8.3).
+- **Do not combine structured `schema` with native tools on the same `generate()` call.** Sufficiency assess uses schema; tool-enabled answer generate uses tools only. (§5.2, §8.1)
 - **Chat models load only via `loadOpenAICompatible`.** No native Ollama or llama.cpp loaders — daemon requires an explicit `models.chat.base_url`. Embeddings stay `loadLocalEmbeddings` or `loadOpenAICompatibleEmbeddings` (§8.2).
 
 ---
@@ -72,10 +74,11 @@ Pulled from the design doc's §11 (Explicitly Deferred / Rejected) — these wer
 - **No embedding cache layer.** `embed()` is called directly against the loaded model. This was tried and deliberately backed out.
 - **No dedicated graph database.** Graph traversal is recursive CTEs over SQLite tables. The performance case for Neo4j/AGE doesn't exist at this project's scale.
 - **No synchronous/inline extraction.** Never block a reply on the KG-extraction LLM call.
-- **No separate relevance-judge LLM call.** The generation call doubles as the sufficiency gate via structured output; don't add a dedicated judge model on top of it.
+- **No third relevance judge on top of answer.** Memory sufficiency is a dedicated structured assess call; the user-facing reply is a separate plain-text (optionally tool-enabled) generate. Do not add another judge LLM after `generateAnswer`. (§5.2, §11)
+- **No user-defined / plugin tools.** Built-in tools only, enabled via YAML booleans. (§5.4, §11)
 - **No ReasoningBank-style procedural memory store.** If a future retrieval-strategy-learning layer is proposed, it must be explicitly gated behind eval evidence per §11 — it is not a general memory mechanism and should never replace the raw log / KG / gist planes.
 - **No dedicated `loadOllama` / `loadLlamaCpp`.** Chat is openai-compatible only with an explicit `base_url`. Do not reintroduce a second HTTP client, in-process GGUF runtime, or an implicit Ollama default (§8.2, §11).
-- **No pre-call `countTokens()` packing.** Fixed top-K + next-turn headroom from response usage only (§5.2, §6, §11).
+- **No pre-call `countTokens()` packing.** Fixed top-K + next-turn usage-relative headroom from answer response usage only — no absolute context-window registry or `capabilities.contextWindow` (§5.2, §6, §8.3, §11).
 - **No new dependency for something §13 already covers.** Check the frameworks table before adding an ORM, HTTP *framework* (control plane uses raw `node:http` only), CLI framework, audio-transcription library, or alternative logger.
 
 ---

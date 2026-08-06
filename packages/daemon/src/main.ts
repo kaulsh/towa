@@ -17,7 +17,11 @@ import {
   Sqlite,
 } from "@towa/core";
 
-import { loadConfigFromFile, loadModels } from "./config.js";
+import {
+  loadConfigFromFile,
+  loadModels,
+  buildToolsFromConfig,
+} from "./config.js";
 import { CONTROL_HOST } from "./control.js";
 import { startControlServer } from "./control-server.js";
 import { startExtractionDrainLoop } from "./drain-loop.js";
@@ -47,6 +51,12 @@ export async function runDaemon(configFilePath: string): Promise<void> {
     webhook: cfg.telegramWebhook,
   });
 
+  const { tools, toolExecutors } = buildToolsFromConfig(cfg);
+  
+  if (tools.length > 0) {
+    log.info({ tools: tools.map((t) => t.name) }, "built-in tools enabled");
+  }
+
   const harness = createHarness({
     db,
     chatModel,
@@ -57,6 +67,8 @@ export async function runDaemon(configFilePath: string): Promise<void> {
       maxWaitMs: cfg.debounceMaxWaitMs,
     },
     sessionIdleThresholdSec: cfg.sessionIdleThresholdSec,
+    tools,
+    toolExecutors,
   });
 
   harness.onTurnCompleted(async (result) => {

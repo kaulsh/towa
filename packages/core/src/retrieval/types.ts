@@ -1,8 +1,9 @@
 /**
- * Retrieval pipeline types — design doc §5.
+ * Retrieval pipeline types — design doc §5 (DB search / assemble).
+ * LLM orchestration types live under `ai/` (query-gen, assess, answer).
  */
 
-/** Hard cap on generation-gate follow-up rounds (§5.2). */
+/** Hard cap on memory-sufficiency follow-up rounds (§5.2). */
 export const GATE_MAX_ROUNDS = 3;
 
 /** Standard RRF constant. */
@@ -28,26 +29,6 @@ export interface RrfScoredEpisode {
   score: number;
   /** Edge ids observed across signals for this episode. */
   edgeIds: string[];
-}
-
-export interface QueryGenResult {
-  searchQueries: string[];
-  entityNames: string[];
-  /**
-   * Soft hint from query-gen that the question may benefit from history.
-   * May widen retrieval; never the sole gate to the historical layer (§5.3).
-   */
-  includeHistoryHint: boolean;
-  /**
-   * Explicit historical requests — load-bearing path into get_history (§5.3).
-   */
-  historyRequests: HistoryRequest[];
-}
-
-export interface HistoryRequest {
-  entity: string;
-  /** Free-form relation label; omit to return all relations for the entity. */
-  relation?: string;
 }
 
 export interface KgFact {
@@ -85,22 +66,8 @@ export interface AssembledRetrievedContext {
   formattedBlocks: string;
 }
 
-export interface GateUsage {
-  promptTokens?: number;
-  completionTokens?: number;
-}
-
-export interface GateSufficient {
-  insufficient: false;
-  answer: string;
-  /** Gate generate usage when the provider reported it (§8.3). */
-  usage?: GateUsage;
-}
-
-export interface GateInsufficient {
-  insufficient: true;
-  followUpQueries: string[];
-  usage?: GateUsage;
-}
-
-export type GateResult = GateSufficient | GateInsufficient;
+/** Re-export query-gen shapes so retrieval consumers can import from one place. */
+export type {
+  HistoryRequest,
+  QueryGenResult,
+} from "../ai/query-gen.js";

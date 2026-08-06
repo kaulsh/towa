@@ -42,10 +42,24 @@ export function assertGenerateCapabilities(
   capabilities: ChatModelCapabilities,
   input: GenerateInput,
 ): void {
+  if (input.schema !== undefined && input.tools !== undefined) {
+    throw new Error(
+      "generate() was called with both schema and tools — these are incompatible on the same call (§8.1).",
+    );
+  }
   if (input.schema !== undefined && !capabilities.structuredOutput) {
     throw new Error(
       "generate() was called with a schema but capabilities.structuredOutput is false. " +
         "Callers must fall back to prompt-based JSON + parse (§8.1); loaders do not degrade silently.",
+    );
+  }
+  if (
+    input.tools !== undefined &&
+    input.tools.length > 0 &&
+    !capabilities.toolCalling
+  ) {
+    throw new Error(
+      "generate() was called with tools but capabilities.toolCalling is false.",
     );
   }
   for (const message of input.messages) {

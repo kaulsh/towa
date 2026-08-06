@@ -23,6 +23,7 @@
     "@huggingface/transformers": "^4.2.0",
     "better-sqlite3": "^11.10.0",
     "kysely": "^0.28.2",
+    "marked": "^18.0.9",
     "ogg-opus-decoder": "^1.7.3",
     "openai": "^6.46.0",
     "pino": "^9.7.0",

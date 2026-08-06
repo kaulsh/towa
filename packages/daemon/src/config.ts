@@ -3,6 +3,7 @@ import { dirname, isAbsolute, join, resolve } from "node:path";
 import { parse as parseYaml } from "yaml";
 import { z } from "zod";
 import {
+  buildEnabledTools,
   loadLocalEmbeddings,
   loadOpenAICompatible,
   loadOpenAICompatibleEmbeddings,
@@ -10,6 +11,10 @@ import {
   type LoadedChatModel,
   type LoadedEmbeddingModel,
   type TelegramWebhookConfig,
+  type ToolDefinition,
+  type ToolExecutor,
+  type WebFetchProvider,
+  type WebSearchProvider,
 } from "@towa/core";
 
 import { resolveControlPort } from "./control.js";
@@ -39,7 +44,6 @@ const YamlConfigSchema = z.object({
       model: z.string().min(1),
       /** Required OpenAI-compatible API base URL (no implicit default). */
       base_url: z.string().min(1),
-      context_window: z.number().int().positive().optional(),
       vision: z.boolean().default(false),
       /** Telegram voice notes only — music/file audio remain unsupported inbound. */
       voice_note_input: z.boolean().default(false),
@@ -93,6 +97,29 @@ const YamlConfigSchema = z.object({
       token: z.string().optional(),
     })
     .default({}),
+  tools: z
+    .object({
+      web: z
+        .object({
+          /** Omit to disable. `"serpapi"` | `"firecrawl"`. */
+          search: z.enum(["serpapi", "firecrawl"]).optional(),
+          /** Omit to disable. `"firecrawl"` | `"fetchapi"`. */
+          fetch: z.enum(["firecrawl", "fetchapi"]).optional(),
+        })
+        .default({}),
+      fs: z
+        .object({
+          enabled: z.boolean().default(false),
+          /** null / omit → <dirname(db.path)>/sandbox */
+          sandbox_root: z.string().nullable().optional(),
+          allowlist: z.array(z.string().min(1)).default([]),
+        })
+        .default({ enabled: false, allowlist: [] }),
+    })
+    .default({
+      web: {},
+      fs: { enabled: false, allowlist: [] },
+    }),
 });
 
 export type YamlConfig = z.infer<typeof YamlConfigSchema>;
@@ -106,7 +133,6 @@ export interface DaemonConfig {
   telegramWebhook?: TelegramWebhookConfig;
 
   chatModel: string;
-  chatContextWindow?: number;
   chatBaseUrl: string;
   chatVision: boolean;
   /** Maps to chat model `capabilities.audioInput` — voice notes only. */
@@ -134,6 +160,16 @@ export interface DaemonConfig {
   control: {
     port: number;
     token?: string;
+  };
+
+  tools: {
+    webSearchProvider?: WebSearchProvider;
+    webFetchProvider?: WebFetchProvider;
+    fsEnabled: boolean;
+    fsSandboxRoot: string;
+    fsAllowlist: string[];
+    serpApiKey?: string;
+    firecrawlApiKey?: string;
   };
 }
 
@@ -206,6 +242,36 @@ export function loadConfigFromFile(
   const controlToken =
     yaml.control.token?.trim() || env.TOWA_CONTROL_TOKEN?.trim() || undefined;
 
+  const webSearchProvider = yaml.tools.web.search;
+  const webFetchProvider = yaml.tools.web.fetch;
+  const fsEnabled = yaml.tools.fs.enabled;
+  const serpApiKey = env.SERPAPI_API_KEY?.trim() || undefined;
+  const firecrawlApiKey = env.FIRECRAWL_API_KEY?.trim() || undefined;
+
+  if (webSearchProvider === "serpapi" && !serpApiKey) {
+    throw new Error(
+      'tools.web.search is "serpapi" but SERPAPI_API_KEY is not set',
+    );
+  }
+  if (
+    (webSearchProvider === "firecrawl" || webFetchProvider === "firecrawl") &&
+    !firecrawlApiKey
+  ) {
+    throw new Error(
+      "tools.web uses firecrawl but FIRECRAWL_API_KEY is not set",
+    );
+  }
+
+  const fsSandboxRoot =
+    yaml.tools.fs.sandbox_root != null &&
+    yaml.tools.fs.sandbox_root.trim().length > 0
+      ? resolvePath(configDir, yaml.tools.fs.sandbox_root.trim())
+      : join(dirname(dbPath), "sandbox");
+
+  const fsAllowlist = yaml.tools.fs.allowlist.map((p) =>
+    resolvePath(configDir, p),
+  );
+
   let telegramWebhook: TelegramWebhookConfig | undefined;
   if (yaml.telegram.webhook) {
     const secret = env.TELEGRAM_WEBHOOK_SECRET?.trim() || undefined;
@@ -227,7 +293,6 @@ export function loadConfigFromFile(
     telegramWebhook,
 
     chatModel: yaml.models.chat.model.trim(),
-    chatContextWindow: yaml.models.chat.context_window,
     chatBaseUrl,
     chatVision: yaml.models.chat.vision,
     chatVoiceNoteInput: yaml.models.chat.voice_note_input,
@@ -259,6 +324,64 @@ export function loadConfigFromFile(
       port: resolveControlPort({ yamlPort: yaml.control.port, env }),
       token: controlToken,
     },
+
+    tools: {
+      webSearchProvider,
+      webFetchProvider,
+      fsEnabled,
+      fsSandboxRoot,
+      fsAllowlist,
+      serpApiKey,
+      firecrawlApiKey,
+    },
+  };
+}
+
+/** Build enabled tool definitions + executors from daemon config (§5.4). */
+export function buildToolsFromConfig(cfg: DaemonConfig): {
+  tools: ToolDefinition[];
+  toolExecutors: Map<string, ToolExecutor>;
+} {
+  const built = buildEnabledTools({
+    ...(cfg.tools.webSearchProvider === "serpapi" && cfg.tools.serpApiKey
+      ? {
+          webSearch: {
+            provider: "serpapi" as const,
+            apiKey: cfg.tools.serpApiKey,
+          },
+        }
+      : {}),
+    ...(cfg.tools.webSearchProvider === "firecrawl" && cfg.tools.firecrawlApiKey
+      ? {
+          webSearch: {
+            provider: "firecrawl" as const,
+            apiKey: cfg.tools.firecrawlApiKey,
+          },
+        }
+      : {}),
+    ...(cfg.tools.webFetchProvider === "firecrawl" && cfg.tools.firecrawlApiKey
+      ? {
+          webFetch: {
+            provider: "firecrawl" as const,
+            apiKey: cfg.tools.firecrawlApiKey,
+          },
+        }
+      : {}),
+    ...(cfg.tools.webFetchProvider === "fetchapi"
+      ? { webFetch: { provider: "fetchapi" as const } }
+      : {}),
+    ...(cfg.tools.fsEnabled
+      ? {
+          fs: {
+            sandboxRoot: cfg.tools.fsSandboxRoot,
+            allowlist: cfg.tools.fsAllowlist,
+          },
+        }
+      : {}),
+  });
+  return {
+    tools: built.definitions,
+    toolExecutors: built.executors,
   };
 }
 
@@ -280,7 +403,6 @@ export async function loadModels(cfg: DaemonConfig): Promise<{
     model: cfg.chatModel,
     baseURL: cfg.chatBaseUrl,
     apiKey: cfg.openaiApiKey,
-    contextWindow: cfg.chatContextWindow,
     vision: cfg.chatVision,
     audioInput: cfg.chatVoiceNoteInput,
   });

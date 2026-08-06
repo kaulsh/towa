@@ -23,8 +23,17 @@ export const DEFAULT_WORKING_TOP_K = 24;
 /** Default retrieved-episode top-K (§5.2 / §6). */
 export const DEFAULT_RETRIEVED_TOP_K = 6;
 
-/** Tighten packing when last prompt ≥ this fraction of contextWindow. */
-export const DEFAULT_HEADROOM_HIGH_WATERMARK = 0.85;
+/**
+ * Meaningful rise in answer promptTokens vs the prior sample (§6).
+ * `last / previous >=` this → tighten (when not already releasing on drop).
+ */
+export const DEFAULT_HEADROOM_RISE_RATIO = 1.15;
+
+/**
+ * Substantial drop in answer promptTokens vs the prior sample (§6).
+ * `last / previous <` this → release to default top-K.
+ */
+export const DEFAULT_HEADROOM_DROP_RATIO = 0.85;
 
 /** Multiply default top-K by this under headroom pressure. */
 export const DEFAULT_HEADROOM_TIGHTEN_FACTOR = 0.5;
@@ -33,13 +42,27 @@ export const DEFAULT_MIN_WORKING_TOP_K = 4;
 export const DEFAULT_MIN_RETRIEVED_TOP_K = 1;
 
 /**
- * Fixed top-K packing + headroom governor options (§5.2, §6).
- * No pre-call token measurement.
+ * Per-chat headroom state for the usage-relative governor (§6).
+ * No absolute context-window size — only consecutive answer usage samples.
+ */
+export interface PackingHeadroomState {
+  /** Most recent answer `usage.promptTokens`. */
+  lastPromptTokens: number;
+  /** Answer promptTokens from the turn before last, when known. */
+  previousPromptTokens?: number;
+  /** Whether the last packing decision used tightened top-K. */
+  tightened: boolean;
+}
+
+/**
+ * Fixed top-K packing + usage-relative headroom governor options (§5.2, §6).
+ * No pre-call token measurement; no absolute context-window denominator.
  */
 export interface ContextPackingOptions {
   workingTopK?: number;
   retrievedTopK?: number;
-  headroomHighWatermark?: number;
+  headroomRiseRatio?: number;
+  headroomDropRatio?: number;
   headroomTightenFactor?: number;
   minWorkingTopK?: number;
   minRetrievedTopK?: number;
@@ -48,10 +71,10 @@ export interface ContextPackingOptions {
 export interface ResolvedPackingLimits {
   workingTopK: number;
   retrievedTopK: number;
-  /** True when last-turn usage triggered tightening. */
+  /** True when usage-relative pressure triggered (or sticky) tightening. */
   tightened: boolean;
-  /** Last prompt tokens used for the decision, if any. */
   lastPromptTokens?: number;
-  /** promptTokens / contextWindow when lastPromptTokens was set. */
-  headroomRatio?: number;
+  previousPromptTokens?: number;
+  /** `lastPromptTokens / previousPromptTokens` when both available. */
+  usageRelative?: number;
 }

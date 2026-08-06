@@ -242,12 +242,12 @@ flowchart LR
     VEC --> RRF
     GRAPH --> RRF
     RRF --> Assemble["Assemble context:<br/>verbatim episodes + current-valid KG facts"]
-    Assemble --> Gen["Generation call"]
-    Gen -->|sufficient| Answer["Answer to user"]
-    Gen -->|"insufficient +<br/>follow_up_queries"| QG
+    Assemble --> Assess["Assess memory sufficiency<br/>(structured, no user answer)"]
+    Assess -->|"insufficient +<br/>follow_up_queries"| QG
+    Assess -->|sufficient or last round| Answer["generateAnswer<br/>(plain text + optional tools)"]
 ```
 
-*(Loop is capped at a fixed K rounds, e.g. K=2–3 — a hard bound, not model discretion, so a stuck loop can't run away.)*
+*(Memory loop is capped at a fixed K rounds, e.g. K=2–3 — a hard bound, not model discretion, so a stuck loop can't run away. The answer tool loop has its own separate hard cap.)*
 
 1. **Forced query-generation** — before answering, the model is given a required structured-output task: produce search queries + entity names from the message + recent context. Not a tool it can decline; a mandatory pipeline stage.
 2. **Multi-signal search** — the three stores are complementary, not redundant:
@@ -256,7 +256,8 @@ flowchart LR
    - *Graph (CTE traversal)* catches structurally-related facts neither of the above surfaces — multi-hop recall ("what's true about my sister") even when the current message never names the entity.
 3. **RRF merge** — candidates from all three are fused by summing `1/(k + rank)` per candidate across lists. Pure arithmetic; sidesteps calibrating incomparable scores (BM25 vs. cosine) against each other.
 4. **Context assembly** — resolves to **verbatim raw turns** from the winning episodes (never summaries-in-place-of-source), plus current-valid KG facts.
-5. **Generation-doubles-as-gate** — the same call that answers the user also declares sufficiency via structured output: either `{answer}` or `{insufficient: true, follow_up_queries: [...]}`. No separate judge/relevance LLM call — the common case (context was enough) costs nothing extra; only a genuinely hard turn pays for a second round.
+5. **Assess memory sufficiency** — a dedicated structured call declares whether retrieved memory is enough for *personal-memory* questions: `{insufficient: false}` or `{insufficient: true, follow_up_queries: [...]}`. It does **not** produce the user-facing reply (combining answer + gate in one schema was unreliable in practice, and native tool calling does not mix cleanly with that dual schema).
+6. **generateAnswer** — after the memory loop settles (sufficient, or last round), a separate plain-text generation produces the user reply. When tools are enabled in daemon config and `capabilities.toolCalling` is true, this call runs a bounded native tool loop (§5.4). Headroom `promptTokens` come from this answer generate.
 
 **Retrieved-context packing:** RRF-ranked candidate episodes are taken in rank order up to a fixed **top-K** (code default; see §6). There is no pre-call `countTokens()` fill-until-budget — tokenizer estimates are unreliable across local models (Gemma/Qwen vs tiktoken), and Ollama/OpenAI usage fields only arrive *after* the generate call. Under headroom pressure from the previous turn's reported prompt tokens (§6), K is tightened for the next turn rather than failing or retrying the current one.
 
@@ -272,15 +273,27 @@ Superseded (closed) edges are excluded by default. A dedicated **`get_history(en
 
 When both current and historical facts land in context together, they are presented to the generation call as **distinct labeled blocks** so the model doesn't blur "you used to" with "you do."
 
+### 5.4 Non-memory agent tools
+
+§5.1 rejects free-form **memory** tools (`search_memory`, etc.). Non-memory capabilities — web search/fetch and filesystem access — are different: they are **built-in tools** (not user-defined via config), enabled by daemon YAML booleans, and attached only to `generateAnswer` after forced retrieval.
+
+| Tool | Backend | Notes |
+|---|---|---|
+| `web_search` | SerpAPI or Firecrawl | Provider via `tools.web.search` (`serpapi` \| `firecrawl`); keys `SERPAPI_API_KEY` / `FIRECRAWL_API_KEY` |
+| `web_fetch` | Firecrawl or native `fetch` | Provider via `tools.web.fetch` (`firecrawl` \| `fetchapi`); Firecrawl needs `FIRECRAWL_API_KEY`; `fetchapi` needs none (rough HTML→text, size-capped) |
+| `fs_list` / `fs_read` / `fs_write` | local FS | sandbox root + config allowlist + per-turn path grant when the path string appears in the user message; `fs_write` may take `source: "media:N"` for turn-scoped inbound media bytes |
+
+No plugin registry. Scheduling / code execution / mini-apps are deferred until this tool loop exists (§11). Tool calling must not be combined with structured `response_format` on the same generate call.
+
 ---
 
 ## 6. Agent Loop & Context Assembly
 
-Per turn: `system prompt + working-context turns (as real user/assistant messages) + final user message (retrieved memory §5 + current text, with multimodal parts when applicable) → generate`.
+Per turn: forced memory retrieval loop (§5.2) → `generateAnswer` (plain text, optionally with tools). Message shape for both assess and answer: `system prompt + working-context turns (as real user/assistant messages) + final user message (retrieved memory §5 + current text, with multimodal parts when applicable)`.
 
-**Working-context buffer:** a sliding window of the most recent raw turns, packed by a fixed **top-K turn count** (after the session boundary), not by pre-call token measurement. When a turn ages out of the window, it is **dropped, not summarized** — no rolling-summary layer. This is safe specifically because every episode is unconditionally gisted+embedded (§2.4) regardless of whether KG extraction judged anything "important" — so anything that ages out remains fully findable by the same forced-retrieval pipeline that runs every turn anyway. The window size is therefore a UX/cost tuning knob (avoiding unnecessary retrieval round-trips for content still obviously part of the live thread), not a correctness knob — nothing is ever actually lost. Because inbound turns are persisted before retrieval runs, the trailing unanswered user burst is **excluded** from the working-context window and supplied only as the live `message` (+ media) on the final user turn for both query-gen and the generation gate — so it is not double-counted.
+**Working-context buffer:** a sliding window of the most recent raw turns, packed by a fixed **top-K turn count** (after the session boundary), not by pre-call token measurement. When a turn ages out of the window, it is **dropped, not summarized** — no rolling-summary layer. This is safe specifically because every episode is unconditionally gisted+embedded (§2.4) regardless of whether KG extraction judged anything "important" — so anything that ages out remains fully findable by the same forced-retrieval pipeline that runs every turn anyway. The window size is therefore a UX/cost tuning knob (avoiding unnecessary retrieval round-trips for content still obviously part of the live thread), not a correctness knob — nothing is ever actually lost. Because inbound turns are persisted before retrieval runs, the trailing unanswered user burst is **excluded** from the working-context window and supplied only as the live `message` (+ media) on the final user turn for query-gen, sufficiency assess, and answer generate — so it is not double-counted.
 
-**Headroom governor (next-turn throttle):** after each turn's generation-gate call, the harness records `usage.promptTokens` from the provider response (OpenAI-compatible `usage.prompt_tokens`, when present) against `capabilities.contextWindow`. If the previous turn's prompt occupied ≥ a high watermark of the window (code default ~85%), the next turn uses tightened top-K values for working turns and retrieved episodes (half of the code defaults, with small floors). Below the watermark, defaults apply. Cold start / missing usage → defaults. Packing/headroom constants are **not** daemon YAML knobs — only debounce and `session_idle_threshold_sec` are exposed there. This is deliberately **not** shrink-on-failure for the current turn — no overflow retry loop; pressure only affects subsequent packing. Usage metrics are never a substitute for deciding which *candidate* block fits mid-assembly; they only govern how aggressive the next fixed-K pack is.
+**Headroom governor (next-turn throttle):** after each turn's **answer** generate, the harness records `usage.promptTokens` from the provider response (OpenAI-compatible `usage.prompt_tokens`, when present) per chat, along with whether that turn's packing was already tightened. The next turn compares consecutive samples **relatively** — no absolute context-window size is required or stored. Code defaults: meaningful rise (`last / previous ≥ ~1.15`) tightens both working and retrieved top-K (half of defaults, with small floors); once tightened, pressure sticks until a substantial drop (`last / previous < ~0.85`) releases back to defaults; cold start / single sample / missing usage → defaults. Packing/headroom constants are **not** daemon YAML knobs — only debounce and `session_idle_threshold_sec` are exposed there. This is deliberately **not** shrink-on-failure for the current turn — no overflow retry loop; pressure only affects subsequent packing. Usage metrics are never a substitute for deciding which *candidate* block fits mid-assembly; they only govern how aggressive the next fixed-K pack is.
 
 **Session boundary:** an idle gap beyond a threshold (e.g. >2 hours) resets the working-context buffer rather than letting it slide continuously. The first message of a new session naturally triggers retrieval to pull back whatever's relevant; carrying yesterday's tail forward is dead weight.
 
@@ -375,7 +388,7 @@ Built on **Telegraf** (§13). Normalizes Bot API events into the shared shapes a
 **The raw log never stores media bytes — only durable columns (`media_file_id` / `media_mime_type` / `media_kind`) plus, once available, a text-derived artifact.** Extraction loads an `EpisodeTurn` with first-class `media?: MediaRef` and `messageId` mapped from those columns — it does not scrape JSON.
 
 - On the inbound path, Telegram resolves `file_id` → base64 and attaches it to the in-memory `InboundMessage.media.data` before `handleTurn`, and seeds a **process-local media-byte cache** (keyed by `fileId`) for later drain enrichment. That payload is never written to SQLite (only durable `MediaRef` fields land in columns). Outbound `send` of binary media also seeds the cache from bytes already held.
-- **Reply path:** before forced retrieval/generation, the harness runs a **sync media caption** for inbound images (vision `generate`) and **Telegram voice notes** (OpenAI-compatible `/v1/audio/transcriptions` — e.g. Ollama Gemma4; no host ffmpeg) and folds that text into the live user message. When `capabilities.vision` is true and image bytes are present, image `MessagePart`s are also attached to the generation-gate `generate()` call. Voice reaches the model as transcript text only. Music/file audio uploads and video are unsupported inbound (static reply). If the model lacks the capability or bytes are missing, the reply path degrades to an explicit text note.
+- **Reply path:** before forced retrieval/generation, the harness runs a **sync media caption** for inbound images (vision `generate`) and **Telegram voice notes** (OpenAI-compatible `/v1/audio/transcriptions` — e.g. Ollama Gemma4; no host ffmpeg) and folds that text into the live user message. When `capabilities.vision` is true and image bytes are present, image `MessagePart`s are also attached to the answer `generate()` call. Voice reaches the model as transcript text only. Music/file audio uploads and video are unsupported inbound (static reply). If the model lacks the capability or bytes are missing, the reply path degrades to an explicit text note.
 - At extraction time (§4), if an episode turn has `media`, enrichment prefers any in-memory `MediaRef.data`, else the process-local cache. **Cache miss → no Telegram call** — degrade to a text note that media existed. When a tip already has a reply-path media artifact, drain **skips** re-describe (idempotent). Otherwise, when bytes are available, checks the active chat model's capabilities (§8.1): if `capabilities.audioInput` (for voice) or `capabilities.vision` (for images) is true, the raw bytes are passed directly into a multimodal `generate()` call to produce a transcript/description. There is no separate transcription library or pipeline — transcription and captioning are both just capability-gated multimodal generation. If the active model lacks the relevant capability, extraction degrades gracefully to recording that media of that kind existed, without content. **Full KG extraction remains async** — only the media caption is synced onto the reply critical path.
 - The text artifact is written back with `appendRawLogEdit` (`is_media_artifact = 1`) so FTS and edit-aware readers (§2.1) see it; the original row is never mutated.
 - **Decision: transcripts/captions are eternal; raw media bytes are best-effort/ephemeral.** Platform file references (e.g. Telegram file IDs) typically expire, so the binary is not guaranteed retrievable months or years later — only its text-derived description is treated as durable memory. A future optional query-time re-download (when a retrieved caption is insufficient and the platform ref has not expired) is deferred — not part of the durable guarantee, and not exposed as a public `fetchMedia` on the Telegram runtime.
@@ -391,12 +404,13 @@ interface LoadedChatModel {
   id: string;
   capabilities: {
     structuredOutput: boolean;
+    toolCalling: boolean;
     vision: boolean;
     audioInput: boolean;
-    contextWindow: number;
   };
   generate(input: GenerateInput): Promise<GenerateOutput>;
-  // GenerateOutput may include usage?: { promptTokens, completionTokens }
+  // GenerateInput may include tools?; GenerateOutput may include toolCalls?
+  // and usage?: { promptTokens, completionTokens }
 }
 
 interface LoadedEmbeddingModel {
@@ -408,9 +422,11 @@ interface LoadedEmbeddingModel {
 
 Chat and embedding models are separate interfaces (not one interface with an optional `embed`), because loaders and call sites for each are genuinely different. Every loader below returns one of these two shapes; the harness never knows or cares whether the underlying endpoint is local or remote.
 
-There is **no `countTokens()` on the chat model.** Context packing uses fixed top-K + a headroom governor fed by post-response `usage.promptTokens` (§5.2, §6) — pre-call tokenization was dropped because estimates (tiktoken, char heuristics) are wrong for common local models and exact tokenize APIs are provider-specific.
+There is **no `countTokens()` on the chat model.** Context packing uses fixed top-K + a usage-relative headroom governor fed by post-response answer `usage.promptTokens` (§5.2, §6, §8.3) — pre-call tokenization was dropped because estimates (tiktoken, char heuristics) are wrong for common local models and exact tokenize APIs are provider-specific. Absolute context-window sizes are not part of the model capability surface.
 
 **Structured-output fallback:** not every local model supports forced JSON/tool-schema output reliably. The harness checks `capabilities.structuredOutput` and falls back to prompt-based JSON + parse + one retry when false — this is what lets the forced-retrieval pipeline (§5) survive small local models without silently breaking.
+
+**Tool calling:** when `capabilities.toolCalling` is true and tools are enabled in config, `generateAnswer` passes native function tools (OpenAI-compatible `tools` / `tool_choice`) and loops on `tool_calls` until a final text reply or a hard round cap. Do **not** combine `schema` (`response_format`) with tools on the same call. When tool calling is unavailable or no tools are enabled, answer generation is a single plain-text `generate()`.
 
 ### 8.2 Loaders
 
@@ -424,23 +440,11 @@ There is **no `countTokens()` on the chat model.** Context packing uses fixed to
 
 **Per-role configuration** (daemon may still share one chat model across reply + extraction today): `chatModel` and `embeddingModel` are configured independently. Chat always goes through `loadOpenAICompatible` with an explicit `baseURL`; embeddings default to local CPU (`loadLocalEmbeddings`) with an openai-compatible escape hatch.
 
-### 8.3 Context-window registry & usage
+### 8.3 Post-response usage & headroom
 
-**Context-window registry, with override.** A small static table shipped with the harness:
+There is **no context-window registry** and no `capabilities.contextWindow`. Absolute max context sizes are model-/server-specific, often wrong in static tables (Ollama `num_ctx` vs card size, provider aliases), and not needed once packing is fixed top-K rather than fill-until-budget. Discovering windows via provider-specific probes (`/api/show`, etc.) would break the openai-compatible-only transport boundary (§8.2).
 
-```typescript
-const KNOWN_CONTEXT_WINDOWS: Record<string, number> = {
-  'llama3.1:8b': 128_000,
-  'qwen2.5:14b': 128_000,
-  'gemma4:e4b': 128_000,
-  'claude-sonnet-5': 200_000,
-  // ...
-};
-```
-
-Every loader's config accepts an optional `contextWindow?: number` override — if a model id isn't in the table, the caller supplies it explicitly. This value populates `capabilities.contextWindow` (§8.1) and is the denominator for the headroom governor (§6). The table needs periodic manual updates as new models ship — a maintenance task, not a design decision (tracked in `CLAUDE.md`, not here).
-
-**Post-response usage.** `generate()` should forward provider usage when the endpoint returns it (`usage.prompt_tokens` / `completion_tokens`). The harness stores the gate call's `promptTokens` per chat for the next turn's headroom check. Missing usage → no tightening (stay on default top-K). Usage is for **headroom governance and logging**, not for mid-assembly fill-until-budget.
+**Post-response usage.** `generate()` should forward provider usage when the endpoint returns it (`usage.prompt_tokens` / `completion_tokens`). The harness stores consecutive **answer** generate `promptTokens` per chat (plus whether the last pack was tightened) for the next turn's usage-relative headroom check (§6). Missing usage → no state update / stay on default top-K. Usage is for **headroom governance and logging**, not for mid-assembly fill-until-budget.
 
 ### 8.4 Model residency, VRAM, and thermal considerations
 
@@ -500,7 +504,11 @@ Recorded so the reasoning isn't lost and isn't accidentally re-litigated without
 - **Embedding cache layer:** considered and rejected — unnecessary storage/complexity overhead at this scale; `embed()` is called directly against the loaded model (local or remote) with no caching indirection.
 - **Pluggable `ChannelAdapter` / multi-channel abstraction:** rejected for v1. Towa is Telegram-native; a generic adapter with `onMessage` registration inverted control the wrong way (harness owning channel callbacks) and invited a dual-DTO glue layer. Revisit only if a second surface is actually built — it should call harness methods (`handleTurn` / `onTurnCompleted`), not resurrect an adapter interface or inject transport into the harness.
 - **Dedicated `loadOllama` / `loadLlamaCpp` chat loaders:** rejected. Ollama is reached via `loadOpenAICompatible` + `/v1` (vision, transcriptions, structured `response_format`); auto-pull and `/api/tokenize` were not worth a second HTTP client. In-process `node-llama-cpp` pins VRAM for the daemon lifetime and was never wired into daemon YAML — dropped entirely (§8.2, §8.4).
-- **Pre-call `countTokens()` context packing:** rejected. Fill-until-token-budget depended on inaccurate estimators for local models; replaced by fixed top-K + next-turn headroom governor from response usage (§5.2, §6, §8.3). Shrink-on-failure retries for the current turn were considered and declined in favor of the governor.
+- **Pre-call `countTokens()` context packing:** rejected. Fill-until-token-budget depended on inaccurate estimators for local models; replaced by fixed top-K + next-turn usage-relative headroom governor from answer `generate()` usage (§5.2, §6, §8.3). Shrink-on-failure retries for the current turn were considered and declined in favor of the governor.
+- **Required / registry `contextWindow`:** rejected. A static known-model table plus YAML override was maintenance noise and still wrong for server-configured windows; the governor no longer needs an absolute denominator. Do not reintroduce `capabilities.contextWindow`, `KNOWN_CONTEXT_WINDOWS`, or provider-specific context probes.
+- **Generation-doubles-as-sufficiency-gate:** rejected after practice. Combining `{answer}` / `{insufficient, follow_up_queries}` on the user-facing generate was unreliable and blocked a clean native tool loop. Memory sufficiency is now a dedicated structured assess call; the user reply is a separate plain-text (optionally tool-enabled) generate (§5.2). Do **not** add a *third* relevance judge on top of the answer.
+- **User-defined / plugin tools via config:** rejected for v1. Tools are a fixed built-in set with YAML enable flags only (§5.4) — no plugin registry.
+- **Scheduling / cron / one-off task runner; code execution / Telegram mini apps:** deferred until the web+FS tool loop is proven. Same tool infra is expected to host them later.
 
 ---
 
@@ -514,15 +522,19 @@ towa/
         raw-log/            # append-only writer, edit/delete handling
         episodes/           # boundary derivation (shared with Telegram write path)
         extraction/         # KG nodes/edges, entity resolution, gist write, pending_extraction queue, runExtraction
-        retrieval/          # query-gen, multi-signal search, RRF, gate loop
+        ai/
+          loaders/          # loadOpenAICompatible, loadLocalEmbeddings, …
+          types.ts          # LoadedChatModel / LoadedEmbeddingModel
+          structured.ts     # generateStructured (capability fallback)
+          query-gen.ts      # forced memory query generation
+          loop.ts           # assessMemorySufficiency, generateAnswer, generateWithTools
+        retrieval/          # FTS / vec / graph search, RRF, assemble, pipeline orchestration
+        tools/              # built-in web + FS tool defs/executors (no generate loop)
         context-assembly/   # working-context window, session boundaries
         harness/            # programmatic agent loop (handleTurn, onTurnCompleted, …)
         media-byte-cache.ts # process-local media bytes (inbound download → enrichment)
         telegram/           # Telegraf runtime: createTelegram → daemon handlers
         messages.ts         # shared InboundMessage / OutboundMessage / MediaRef / TurnResult
-        ai/
-          loaders/          # loadOpenAICompatible, loadLocalEmbeddings, …
-          types.ts          # LoadedChatModel / LoadedEmbeddingModel
         db/
           migrations/
     daemon/                 # @towa/daemon — Telegram daemon + `towa` CLI bin
@@ -545,12 +557,14 @@ Storage engines and model providers are covered in §3 and §8. This section cov
 |---|---|---|
 | SQL query building | **Kysely** | Type-safe query builder over `better-sqlite3` (§3). Chosen over a full ORM (Prisma, Drizzle relational mode) specifically because the design requires two things ORMs tend to fight or can't express: recursive CTEs for graph traversal (§5.2) and `sqlite-vec`'s custom virtual-table functions (`vec_distance_cosine`, etc.). Kysely's raw-fragment escape hatch handles both while keeping everything else type-safe. |
 | Telegram integration | **Telegraf** | Powers `createTelegram` (§7.2). Defaults to long-polling (`bot.launch()`) — zero infrastructure for a single-user daemon. Webhook mode is available via Telegraf's own bundled `webhookCallback`, so no separate HTTP framework is needed even then. |
-| Structured-output validation | **Zod** | Validates every forced-pipeline structured output (query-gen, sufficiency gate, entity-resolution verification — §5.1, §4.3) after the JSON-parse fallback (§8.1). A malformed response from a less-capable local model fails loudly instead of silently corrupting state. |
+| Structured-output validation | **Zod** | Validates every forced-pipeline structured output (query-gen, memory sufficiency assess, entity-resolution verification — §5.1, §4.3) after the JSON-parse fallback (§8.1). A malformed response from a less-capable local model fails loudly instead of silently corrupting state. Also defines tool parameter schemas for native function calling (§5.4). |
+| Web search | **SerpAPI** or **Firecrawl** (HTTP) | `web_search` when `tools.web.search` is set (`serpapi` \| `firecrawl`); keys via `SERPAPI_API_KEY` / `FIRECRAWL_API_KEY`. Hand-rolled `fetch`, no SDK. |
+| Web fetch | **Firecrawl** or native **`fetch`** | `web_fetch` when `tools.web.fetch` is set (`firecrawl` \| `fetchapi`). Firecrawl scrape needs `FIRECRAWL_API_KEY`; `fetchapi` uses Node `fetch` with rough HTML→text (no key). |
 | Logging | **Pino** | Structured info/debug/error logging. Process-wide `configureLogging` / `getLogger` in `@towa/core` (multistream → stdout + size-capped rotating file). Never construct bare `pino()` outside that module; never thread `logger` through deps. `towa logs` streams the file via the control plane. |
-| Config / secrets | YAML config file + secret env vars | Daemon boots with `towa run --config-file PATH`. Non-secret settings (chat id, model ids, paths, debounce, …) live in YAML validated with Zod. Secrets only via env: `TELEGRAM_BOT_TOKEN`, provider API keys (`OPENAI_API_KEY`, …), optional webhook/`control` tokens. Optional `dotenv` still loads those secrets for local dev. |
+| Config / secrets | YAML config file + secret env vars | Daemon boots with `towa run --config-file PATH`. Non-secret settings (chat id, model ids, paths, debounce, tool enable flags, …) live in YAML validated with Zod. Secrets only via env: `TELEGRAM_BOT_TOKEN`, provider API keys (`OPENAI_API_KEY`, `SERPAPI_API_KEY`, `FIRECRAWL_API_KEY`, …), optional webhook/`control` tokens. Optional `dotenv` still loads those secrets for local dev. |
 | Control plane | Node built-in `node:http` | Tiny localhost server on the daemon: `POST /command` (`ping` / `status` / `stop`) and `GET /logs` (tail the pino log file). Not an application HTTP framework — no Express/Hono/Fastify. |
 | CLI | Hand-rolled argv on the `towa` bin | `towa run` starts the foreground daemon; `towa stop` / `status` / `ping` / `logs` are thin HTTP clients against a fixed localhost control port (`127.0.0.1:18741` by default; override via YAML `control.port`, `TOWA_CONTROL_PORT`, or CLI `--port`). No runtime-state file — unreachable control HTTP means the daemon is not running. No CLI framework. |
-| Context packing | Fixed top-K + headroom governor from `generate()` usage | No pre-call tokenizer; see §5.2, §6, §8.3. |
+| Context packing | Fixed top-K + usage-relative headroom from answer `generate()` usage | No pre-call tokenizer; no context-window registry; see §5.2, §6, §8.3. |
 | Testing | Evals only — promptfoo + Langfuse (§9) | See §9.3. |
 
 **Deliberately not introduced:** an HTTP *framework* (Telegraf covers Telegram webhook mode natively — §7.2; the daemon control plane uses raw `node:http` only), a CLI framework (hand-rolled argv is enough), a migration framework (§10 — hand-rolled scripts are sufficient at this scale), an embedding cache (§11 — tried and backed out), a message broker (§11 — a table + drain loop covers the write-path queue), a dedicated audio-transcription library (§7.3 — routed through multimodal chat models via `capabilities.audioInput` instead), a full ORM (§13 above — Kysely was chosen specifically to avoid this).

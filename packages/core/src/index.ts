@@ -28,7 +28,7 @@ export {
 // Database
 export * from "./db/index.js";
 
-// Models — loaders + the interfaces they satisfy (for custom loaders too)
+// Models — loaders + interfaces + LLM orchestration (query-gen / assess / answer)
 export type {
   AudioPart,
   ChatMessage,
@@ -42,15 +42,51 @@ export type {
   LoadedEmbeddingModel,
   MessagePart,
   TextPart,
+  ToolCall,
+  ToolDefinition,
 } from "./ai/types.js";
 export {
+  assessMemorySufficiency,
+  generateAnswer,
+  generateSearchQueries,
+  generateStructured,
+  generateWithTools,
   loadLocalEmbeddings,
   loadOpenAICompatible,
   loadOpenAICompatibleEmbeddings,
+  TOOL_MAX_ROUNDS,
+  type AnswerResult,
+  type AssessResult,
+  type GenerateAnswerInput,
+  type GenerateWithToolsResult,
+  type HistoryRequest,
   type LocalEmbeddingsConfig,
   type OpenAICompatibleConfig,
   type OpenAICompatibleEmbeddingsConfig,
-} from "./ai/loaders/index.js";
+  type QueryGenResult,
+  type StructuredGenerateResult,
+} from "./ai/index.js";
+
+// Built-in agent tools (§5.4) — daemon enables subsets via YAML
+export {
+  buildEnabledTools,
+  buildTurnMediaRefs,
+  createFsTools,
+  createWebFetchTool,
+  createWebSearchTool,
+  isPathAllowed,
+  WEB_FETCH_PROVIDERS,
+  WEB_SEARCH_PROVIDERS,
+  type BoundTool,
+  type BuildEnabledToolsInput,
+  type FsToolOptions,
+  type ToolExecuteResult,
+  type ToolExecutor,
+  type ToolTurnContext,
+  type TurnMediaRef,
+  type WebFetchProvider,
+  type WebSearchProvider,
+} from "./tools/index.js";
 
 // Shared message shapes (send lives on Telegram; media bytes via process cache)
 export type {

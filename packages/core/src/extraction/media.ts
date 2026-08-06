@@ -169,7 +169,9 @@ export async function captionAndPersistInboundMedia(
       .where("deleted_marker", "=", 0)
       .orderBy("id", "asc")
       .execute();
+
     const latest = tip[tip.length - 1]!;
+
     if (contentHasMediaArtifact(latest.content)) {
       const artifact = extractTrailingArtifact(latest.content);
       if (artifact) {
@@ -179,6 +181,7 @@ export async function captionAndPersistInboundMedia(
     }
 
     const artifact = await describeMedia(media, chatModel);
+    
     artifactsByMessageId.set(msg.messageId, artifact);
 
     const wireBase = original.content.trim();

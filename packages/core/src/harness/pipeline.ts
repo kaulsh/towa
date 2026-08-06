@@ -1,27 +1,34 @@
 import type { Kysely } from "kysely";
 
 import type { Database } from "../db/types.js";
+import {
+  assessMemorySufficiency,
+  generateAnswer,
+  generateSearchQueries,
+  type QueryGenResult,
+} from "../ai/index.js";
 import type {
   LoadedChatModel,
   LoadedEmbeddingModel,
   MessagePart,
+  ToolDefinition,
 } from "../ai/types.js";
 import {
   buildWorkingContext,
   excludeTrailingUserTurns,
   resolvePackingLimits,
+  type PackingHeadroomState,
   type WorkingContextTurn,
 } from "../context-assembly/index.js";
 import { getLogger } from "../logging.js";
+import type { ToolExecutor, TurnMediaRef } from "../tools/types.js";
 
-import { assembleRetrievedContext } from "./assemble.js";
-import { generateWithGate } from "./gate.js";
-import { multiSignalSearch } from "./multi-signal.js";
-import { generateSearchQueries } from "./query-gen.js";
-import { GATE_MAX_ROUNDS } from "./types.js";
-import type { AssembledRetrievedContext, QueryGenResult } from "./types.js";
+import { assembleRetrievedContext } from "../retrieval/assemble.js";
+import { multiSignalSearch } from "../retrieval/multi-signal.js";
+import { GATE_MAX_ROUNDS } from "../retrieval/types.js";
+import type { AssembledRetrievedContext } from "../retrieval/types.js";
 
-export interface RunRetrievalAndGenerateInput {
+export interface RunPipelineInput {
   db: Kysely<Database>;
   chatModel: LoadedChatModel;
   embeddingModel: LoadedEmbeddingModel;
@@ -32,7 +39,7 @@ export interface RunRetrievalAndGenerateInput {
   message: string;
   /**
    * Optional image/audio parts for reply-path multimodal generate (§7.3).
-   * Attached to the gate user message when non-empty; ignored by query-gen.
+   * Attached to assess/answer user messages when non-empty; ignored by query-gen.
    */
   mediaParts?: readonly MessagePart[];
   /**
@@ -43,70 +50,70 @@ export interface RunRetrievalAndGenerateInput {
   recentTurns: readonly WorkingContextTurn[];
   systemPrompt?: string;
   /**
-   * Previous turn's gate `usage.promptTokens` for this chat (§6 headroom).
+   * Per-chat usage-relative headroom state (§6).
    * Cold start / missing → default top-K.
    */
-  lastPromptTokens?: number;
-  /** Override gate round cap (default GATE_MAX_ROUNDS = 3). */
+  headroomState?: PackingHeadroomState;
+  /** Override memory assess round cap (default GATE_MAX_ROUNDS = 3). */
   maxGateRounds?: number;
   /** Passed through to working-context session boundary (§6). */
   sessionIdleThresholdSec?: number;
   nowSec?: number;
+  /** Enabled built-in tools for answer generate (§5.4). */
+  tools?: ToolDefinition[];
+  toolExecutors?: ReadonlyMap<string, ToolExecutor>;
+  turnMediaRefs?: readonly TurnMediaRef[];
 }
 
-export interface RunRetrievalAndGenerateResult {
+export interface RunPipelineResult {
   answer: string;
-  /** How many generation-gate rounds ran (1 = answered on first try). */
+  /** How many memory-assess rounds ran (1 = sufficient on first try). */
   roundsUsed: number;
   lastQueryGen: QueryGenResult;
   lastRetrieved: AssembledRetrievedContext;
   /** Prior conversation only — current user burst is `message`, not here. */
   workingContext: WorkingContextTurn[];
   /**
-   * Prompt tokens from the last gate generate of this turn (when reported).
+   * Prompt tokens from the answer generate of this turn (when reported).
    * Harness stores this for the next turn's headroom governor.
    */
   promptTokens?: number;
+  /** Whether this turn's packing used tightened top-K (§6). */
+  packingTightened: boolean;
 }
 
 const DEFAULT_SYSTEM_PROMPT =
-  "You are Towa, a personal AI assistant with long-term memory. Prefer retrieved memory and working context over speculation.";
+  "You are Towa, a personal AI assistant. Prefer retrieved memory and working context over speculation.";
 
 /**
- * Single entry point for the forced retrieval pipeline + generation-gate loop
- * (§5.2, §6). Integration wires this once per turn.
+ * Forced retrieval pipeline + memory sufficiency loop + answer generate
+ * (§5.2, §5.4, §6).
  *
- * Always runs: query-gen → multi-signal search → RRF → assemble → generate/gate.
+ * Always runs: query-gen → multi-signal search → RRF → assemble → assess.
  * On insufficient, loops with follow_up_queries, hard-capped at K rounds.
- *
- * Packing is fixed top-K (+ headroom tighten from `lastPromptTokens`).
+ * Then generateAnswer (plain text, optional tools) once.
  */
-export async function runRetrievalAndGenerate(
-  input: RunRetrievalAndGenerateInput,
-): Promise<RunRetrievalAndGenerateResult> {
+export async function runPipeline(
+  input: RunPipelineInput,
+): Promise<RunPipelineResult> {
   const systemPrompt = input.systemPrompt ?? DEFAULT_SYSTEM_PROMPT;
   const maxRounds = input.maxGateRounds ?? GATE_MAX_ROUNDS;
   const nowSec = input.nowSec ?? Math.floor(Date.now() / 1000);
   const log = getLogger("retrieval");
 
-  const limits = resolvePackingLimits(
-    input.chatModel.capabilities.contextWindow,
-    input.lastPromptTokens,
-  );
+  const limits = resolvePackingLimits(input.headroomState);
   log.info(
     {
       workingTopK: limits.workingTopK,
       retrievedTopK: limits.retrievedTopK,
       tightened: limits.tightened,
-      headroomRatio: limits.headroomRatio,
+      usageRelative: limits.usageRelative,
       lastPromptTokens: limits.lastPromptTokens,
+      previousPromptTokens: limits.previousPromptTokens,
     },
     "context packing limits",
   );
 
-  // Current burst is already in raw_log / recentTurns; exclude it so the
-  // sliding window packs prior conversation only. `input.message` (+ media)
-  // is the live user turn for query-gen and the gate.
   const priorTurns = excludeTrailingUserTurns(input.recentTurns);
   const workingContext = buildWorkingContext(priorTurns, {
     topK: limits.workingTopK,
@@ -116,9 +123,7 @@ export async function runRetrievalAndGenerate(
   let followUpQueries: string[] = [];
   let lastQueryGen: QueryGenResult | null = null;
   let lastRetrieved: AssembledRetrievedContext | null = null;
-  let answer = "";
   let roundsUsed = 0;
-  let promptTokens: number | undefined;
 
   for (let round = 1; round <= maxRounds; round++) {
     roundsUsed = round;
@@ -148,52 +153,61 @@ export async function runRetrievalAndGenerate(
     });
     lastRetrieved = retrieved;
 
-    const forceAnswer = round === maxRounds;
-    const gate = await generateWithGate(input.chatModel, {
+    const forceProceed = round === maxRounds;
+    const assess = await assessMemorySufficiency(input.chatModel, {
       systemPrompt,
       workingContext,
       retrievedBlocks: retrieved.formattedBlocks,
       message: input.message,
       mediaParts: input.mediaParts,
-      forceAnswer,
+      forceProceed,
     });
 
-    if (gate.usage?.promptTokens !== undefined) {
-      promptTokens = gate.usage.promptTokens;
-    }
-
-    if (!gate.insufficient) {
-      log.info(
-        {
-          round,
-          forceAnswer,
-          answerLen: gate.answer.length,
-          answerPreview: gate.answer.slice(0, 80),
-          promptTokens,
-        },
-        "gate answered",
-      );
-      answer = gate.answer;
+    if (!assess.insufficient) {
+      log.info({ round, forceProceed }, "memory assess: sufficient");
       break;
     }
 
     log.info(
       {
         round,
-        followUpQueries: gate.followUpQueries,
-        promptTokens,
+        followUpQueries: assess.followUpQueries,
       },
-      "gate insufficient — another retrieval round",
+      "memory assess: insufficient — another retrieval round",
     );
-    followUpQueries = gate.followUpQueries;
+    followUpQueries = assess.followUpQueries;
   }
 
+  const answerResult = await generateAnswer(input.chatModel, {
+    systemPrompt,
+    workingContext,
+    retrievedBlocks: lastRetrieved!.formattedBlocks,
+    message: input.message,
+    mediaParts: input.mediaParts,
+    tools: input.tools,
+    toolExecutors: input.toolExecutors,
+    turnMediaRefs: input.turnMediaRefs,
+  });
+
+  log.info(
+    {
+      roundsUsed,
+      answerLen: answerResult.answer.length,
+      answerPreview: answerResult.answer.slice(0, 80),
+      promptTokens: answerResult.usage?.promptTokens,
+    },
+    "answer generated",
+  );
+
   return {
-    answer,
+    answer: answerResult.answer,
     roundsUsed,
     lastQueryGen: lastQueryGen!,
     lastRetrieved: lastRetrieved!,
     workingContext,
-    ...(promptTokens !== undefined ? { promptTokens } : {}),
+    packingTightened: limits.tightened,
+    ...(answerResult.usage?.promptTokens !== undefined
+      ? { promptTokens: answerResult.usage.promptTokens }
+      : {}),
   };
 }

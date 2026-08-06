@@ -23,7 +23,6 @@ models:
     # (no implicit endpoint — use a recipe / fill in your server).
     model: gemma4:e4b
     base_url: http://127.0.0.1:11434/v1
-    # context_window: 128000  # required if model id is unknown to the registry
     # Multimodal capability flags (§7.3 / §8.1). Default false = durable
     # "media present" notes only (no image/voice content in the reply path).
     vision: true
@@ -55,3 +54,16 @@ control:
   # TOWA_CONTROL_PORT if you change this.
   # port: 18741
   # token: optional; or set TOWA_CONTROL_TOKEN in the environment
+
+# Built-in agent tools (§5.4). Omit web.search / web.fetch to disable.
+# Secrets via env when the chosen provider needs them:
+#   SERPAPI_API_KEY (search: serpapi), FIRECRAWL_API_KEY (search/fetch: firecrawl).
+# fetch: fetchapi uses native HTTP fetch — no API key.
+tools:
+  web:
+    # search: serpapi   # or firecrawl
+    fetch: fetchapi   # or firecrawl
+  fs:
+    enabled: false
+    # sandbox_root: null  # default: <dirname(db.path)>/sandbox
+    allowlist: [] # always-allowed absolute (or config-relative) path prefixes

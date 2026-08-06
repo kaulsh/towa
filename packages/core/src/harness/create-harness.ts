@@ -10,11 +10,18 @@ import type {
   LoadedChatModel,
   LoadedEmbeddingModel,
   MessagePart,
+  ToolDefinition,
 } from "../ai/types.js";
 import { loadRecentWorkingTurns } from "../context-assembly/load-turns.js";
+import {
+  nextPackingHeadroomState,
+  type PackingHeadroomState,
+} from "../context-assembly/index.js";
 import { captionAndPersistInboundMedia } from "../extraction/media.js";
 import { getLogger } from "../logging.js";
-import { runRetrievalAndGenerate } from "../retrieval/pipeline.js";
+import { runPipeline, RunPipelineResult } from "./pipeline.js";
+import { buildTurnMediaRefs } from "../tools/registry.js";
+import type { ToolExecutor } from "../tools/types.js";
 
 import { createBurstDebouncer, type BurstDebouncer } from "./debounce.js";
 import {
@@ -44,6 +51,9 @@ export interface CreateHarnessDeps {
   debounce?: Partial<HarnessDebounceOptions>;
   /** Passed through to working-context session boundary (§6). */
   sessionIdleThresholdSec?: number;
+  /** Enabled built-in tools for answer generate (§5.4). */
+  tools?: ToolDefinition[];
+  toolExecutors?: ReadonlyMap<string, ToolExecutor>;
 }
 
 export type TurnCompletedHandler = (result: TurnResult) => void | Promise<void>;
@@ -145,7 +155,7 @@ function formatArtifactForGeneration(artifact: string): string {
 
 /**
  * Build user turn text (+ multimodal parts) for the reply path.
- * Query-gen / logging use `text`; gate generate uses `text` plus `mediaParts`.
+ * Query-gen / logging use `text`; answer generate uses `text` plus `mediaParts`.
  * When `mediaArtifacts` is set (sync caption), fold those into text.
  * Missing bytes or lacking capability → explicit text notes (no silent drop).
  */
@@ -213,6 +223,28 @@ function buildUserTurnContent(
  * does not register channel callbacks, own transport, or run the drain worker.
  * Outbound delivery is via `onTurnCompleted` — no injected `send`.
  */
+function collectTurnMediaRefs(
+  messages: readonly InboundMessage[],
+): ReturnType<typeof buildTurnMediaRefs> {
+  const items: Array<{
+    data: Buffer;
+    mimeType: string;
+    kind: string;
+    fileName?: string;
+  }> = [];
+  for (const msg of messages) {
+    const media = msg.media;
+    if (!media?.data) continue;
+    items.push({
+      data: Buffer.from(media.data, "base64"),
+      mimeType: media.mimeType,
+      kind: media.kind,
+      ...(media.fileName !== undefined ? { fileName: media.fileName } : {}),
+    });
+  }
+  return buildTurnMediaRefs(items);
+}
+
 export function createHarness(deps: CreateHarnessDeps): Harness {
   const {
     db,
@@ -220,6 +252,8 @@ export function createHarness(deps: CreateHarnessDeps): Harness {
     embeddingModel,
     systemPrompt,
     sessionIdleThresholdSec,
+    tools,
+    toolExecutors,
   } = deps;
   const log = getLogger("harness");
 
@@ -237,8 +271,8 @@ export function createHarness(deps: CreateHarnessDeps): Harness {
   /** Messages that arrived for `inflightChatId` after its turn started. */
   const lateByChat = new Map<string, InboundMessage[]>();
   const turnCompletedHandlers: TurnCompletedHandler[] = [];
-  /** Last gate promptTokens per chat — headroom governor (§6). */
-  const lastPromptTokensByChat = new Map<string, number>();
+  /** Usage-relative headroom state per chat (§6). */
+  const headroomByChat = new Map<string, PackingHeadroomState>();
 
   function enqueueBurst(batched: InboundMessage[]): void {
     if (batched.length === 0) return;
@@ -318,12 +352,15 @@ export function createHarness(deps: CreateHarnessDeps): Harness {
           recordInRawLog: false,
         },
       ]);
+
       log.info({ chatId }, "queued /start help");
+
       return;
     }
 
     if (soleSlash?.kind === "init_cancel") {
       await cancelInitInterview(db, chatId);
+
       await deliver(chatId, [
         {
           type: "text",
@@ -331,22 +368,28 @@ export function createHarness(deps: CreateHarnessDeps): Harness {
           recordInRawLog: false,
         },
       ]);
+
       log.info({ chatId }, "init interview cancelled");
+
       return;
     }
 
     if (soleSlash?.kind === "init") {
       log.info({ chatId }, "starting/resuming init interview");
+
       const reply = await startOrResumeInitInterview({
         db,
         chatModel,
         chatId,
       });
+
       await deliver(chatId, [{ type: "text", text: reply }]);
+
       return;
     }
 
     const interview = await loadInitInterviewState(db, chatId);
+
     if (interview.status === "active") {
       log.info(
         {
@@ -359,31 +402,43 @@ export function createHarness(deps: CreateHarnessDeps): Harness {
 
       // Snapshot so late-arrival regenerates don't double-count turn_count / goals.
       const stateBefore = await loadInitInterviewState(db, chatId);
+
       let reply = "";
+
       let attempt = 0;
+
       for (;;) {
         if (attempt > 0) {
           await saveInitInterviewState(db, stateBefore);
         }
+
         attempt += 1;
+
         const answerText = buildUserTurnContent(turnMessages, chatModel).text;
+
         reply = await continueInitInterview({
           db,
           chatModel,
           chatId,
           userMessage: answerText,
         });
+
         const next = takeLateArrivals(chatId, turnMessages);
+
         if (next === turnMessages) break;
+
         turnMessages = next;
       }
 
       await deliver(chatId, [{ type: "text", text: reply }]);
+
       return;
     }
 
     const hasInboundMedia = turnMessages.some((m) => Boolean(m.media));
+
     let mediaArtifacts: ReadonlyMap<string, string> | undefined;
+
     if (hasInboundMedia) {
       log.info(
         { chatId, burstSize: turnMessages.length },
@@ -410,6 +465,7 @@ export function createHarness(deps: CreateHarnessDeps): Harness {
       chatModel,
       mediaArtifacts,
     );
+
     log.info(
       {
         chatId,
@@ -420,15 +476,18 @@ export function createHarness(deps: CreateHarnessDeps): Harness {
       "running forced retrieval pipeline",
     );
 
-    let result: Awaited<ReturnType<typeof runRetrievalAndGenerate>> | undefined;
-    for (;;) {
+    let result: RunPipelineResult | undefined;
+
+    do {
       const recentTurns = await loadRecentWorkingTurns(db);
+
       const turn = buildUserTurnContent(
         turnMessages,
         chatModel,
         mediaArtifacts,
       );
-      result = await runRetrievalAndGenerate({
+
+      result = await runPipeline({
         db,
         chatModel,
         embeddingModel,
@@ -436,15 +495,28 @@ export function createHarness(deps: CreateHarnessDeps): Harness {
         mediaParts: turn.mediaParts,
         recentTurns,
         systemPrompt,
-        lastPromptTokens: lastPromptTokensByChat.get(chatId),
+        headroomState: headroomByChat.get(chatId),
         sessionIdleThresholdSec,
+        tools,
+        toolExecutors,
+        turnMediaRefs: collectTurnMediaRefs(turnMessages),
       });
-      if (result.promptTokens !== undefined) {
-        lastPromptTokensByChat.set(chatId, result.promptTokens);
+
+      const nextHeadroom = nextPackingHeadroomState(
+        headroomByChat.get(chatId),
+        result.promptTokens,
+        result.packingTightened,
+      );
+      if (nextHeadroom !== undefined) {
+        headroomByChat.set(chatId, nextHeadroom);
       }
+
       const next = takeLateArrivals(chatId, turnMessages);
+
       if (next === turnMessages) break;
+
       turnMessages = next;
+
       // Late arrivals may include new media — re-caption before regenerating.
       if (next.some((m) => Boolean(m.media))) {
         const captioned = await captionAndPersistInboundMedia(
@@ -454,7 +526,7 @@ export function createHarness(deps: CreateHarnessDeps): Harness {
         );
         mediaArtifacts = captioned.artifactsByMessageId;
       }
-    }
+    } while (true);
 
     log.info(
       {

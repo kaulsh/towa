@@ -5,19 +5,19 @@ export {
   indexRawLogForFts,
   escapeFtsQuery,
 } from "./fts-index.js";
-export { generateWithGate } from "./gate.js";
 export { multiSignalSearch } from "./multi-signal.js";
-export { runRetrievalAndGenerate } from "./pipeline.js";
+export { runPipeline as runRetrievalAndGenerate } from "../harness/pipeline.js";
 export type {
-  RunRetrievalAndGenerateInput,
-  RunRetrievalAndGenerateResult,
-} from "./pipeline.js";
-export { generateSearchQueries } from "./query-gen.js";
+  RunPipelineInput as RunRetrievalAndGenerateInput,
+  RunPipelineResult as RunRetrievalAndGenerateResult,
+} from "../harness/pipeline.js";
 export { mergeRrf } from "./rrf.js";
 export { searchGraph } from "./search-graph.js";
 export { searchLexical } from "./search-lexical.js";
-export { searchSemantic, parseProvenanceEpisodeIds } from "./search-semantic.js";
-export { generateStructured } from "./structured.js";
+export {
+  searchSemantic,
+  parseProvenanceEpisodeIds,
+} from "./search-semantic.js";
 export {
   getHistory,
   isCurrentlyValid,
@@ -31,9 +31,6 @@ export {
   type AssembledRetrievedContext,
   type EpisodeTurns,
   type FtsSourceType,
-  type GateInsufficient,
-  type GateResult,
-  type GateSufficient,
   type HistoryRequest,
   type KgFact,
   type QueryGenResult,

@@ -11,6 +11,7 @@ import type { Telegram } from "telegraf";
 import type { Message } from "telegraf/types";
 
 import { withTransientRetry, type TransientRetryOptions } from "./api-retry.js";
+import { markdownToTelegramHtml } from "./markdown-to-telegram-html.js";
 
 /** InputFile-shaped upload used for photo/video/voice buffers. */
 export type TelegramUpload = { source: Buffer };
@@ -70,13 +71,13 @@ export function createTelegramApi(
       retrying(
         "sendMessage",
         () =>
-          telegram.sendMessage(
-            chatId,
-            text,
-            replyToMessageId !== undefined
-              ? { reply_parameters: { message_id: replyToMessageId } }
-              : undefined,
-          ),
+          telegram.sendMessage(chatId, markdownToTelegramHtml(text), {
+            parse_mode: "HTML",
+            reply_parameters:
+              replyToMessageId !== undefined
+                ? { message_id: replyToMessageId }
+                : undefined,
+          }),
         options,
       ),
 

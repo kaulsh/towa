@@ -1,6 +1,5 @@
 import OpenAI from "openai";
 import { zodResponseFormat } from "openai/helpers/zod";
-import { resolveContextWindow } from "../context-window-registry.js";
 import type {
   ChatMessage,
   GenerateInput,
@@ -8,14 +7,18 @@ import type {
   GenerateUsage,
   LoadedChatModel,
   LoadedEmbeddingModel,
+  ToolCall,
+  ToolDefinition,
 } from "../types.js";
 import { transcribeOpenAICompatible } from "./openai-transcribe.js";
 import {
   assertGenerateCapabilities,
   flattenMessageText,
   parseStructuredText,
+  zodToJsonSchema,
 } from "./shared.js";
 import type { MessagePart } from "../types.js";
+import { ChatCompletionCreateParamsNonStreaming } from "openai/resources";
 
 export interface OpenAICompatibleConfig {
   /** Model id as understood by the remote endpoint. */
@@ -24,13 +27,16 @@ export interface OpenAICompatibleConfig {
   baseURL: string;
   /** API key; many local servers accept any non-empty string. */
   apiKey?: string;
-  /** Override for `capabilities.contextWindow` (§8.3). */
-  contextWindow?: number;
   /**
    * Whether the endpoint supports forced JSON / json_schema.
    * Defaults to `true` for OpenAI-shaped APIs.
    */
   structuredOutput?: boolean;
+  /**
+   * Whether the endpoint supports native function / tool calling.
+   * Defaults to `true` for OpenAI-shaped APIs.
+   */
+  toolCalling?: boolean;
   vision?: boolean;
   audioInput?: boolean;
 }
@@ -72,10 +78,34 @@ function toOpenAIContent(content: ChatMessage["content"]): OpenAIChatContent {
   return parts;
 }
 
+function toOpenAITools(
+  tools: ToolDefinition[],
+): OpenAI.Chat.ChatCompletionTool[] {
+  return tools.map((tool) => ({
+    type: "function" as const,
+    function: {
+      name: tool.name,
+      description: tool.description,
+      parameters: zodToJsonSchema(tool.parameters),
+    },
+  }));
+}
+
 function toOpenAIMessages(
   messages: ChatMessage[],
 ): OpenAI.Chat.ChatCompletionMessageParam[] {
   return messages.map((message) => {
+    if (message.role === "tool") {
+      return {
+        role: "tool",
+        content:
+          typeof message.content === "string"
+            ? message.content
+            : flattenMessageText(message.content),
+        tool_call_id: message.toolCallId ?? "",
+      };
+    }
+
     const content = toOpenAIContent(message.content);
     if (message.role === "system") {
       return {
@@ -87,6 +117,24 @@ function toOpenAIMessages(
       };
     }
     if (message.role === "assistant") {
+      const toolCalls = message.toolCalls;
+      if (toolCalls && toolCalls.length > 0) {
+        return {
+          role: "assistant",
+          content:
+            typeof content === "string"
+              ? content || null
+              : flattenMessageText(message.content) || null,
+          tool_calls: toolCalls.map((tc) => ({
+            id: tc.id,
+            type: "function" as const,
+            function: {
+              name: tc.name,
+              arguments: tc.arguments,
+            },
+          })),
+        };
+      }
       return {
         role: "assistant",
         content:
@@ -128,6 +176,23 @@ function collectAudioParts(
   return out;
 }
 
+function mapToolCalls(
+  message: OpenAI.Chat.ChatCompletionMessage | undefined,
+): ToolCall[] | undefined {
+  const raw = message?.tool_calls;
+  if (!raw || raw.length === 0) return undefined;
+  const out: ToolCall[] = [];
+  for (const tc of raw) {
+    if (tc.type !== "function") continue;
+    out.push({
+      id: tc.id,
+      name: tc.function.name,
+      arguments: tc.function.arguments ?? "{}",
+    });
+  }
+  return out.length > 0 ? out : undefined;
+}
+
 /**
  * Sole chat loader (§8.2) — OpenAI-compatible HTTP, including Ollama `/v1`.
  */
@@ -139,15 +204,11 @@ export async function loadOpenAICompatible(
     baseURL: config.baseURL,
   });
 
-  const contextWindow = resolveContextWindow(
-    config.model,
-    config.contextWindow,
-  );
   const capabilities = {
     structuredOutput: config.structuredOutput ?? true,
+    toolCalling: config.toolCalling ?? true,
     vision: config.vision ?? false,
     audioInput: config.audioInput ?? false,
-    contextWindow,
   };
 
   const model: LoadedChatModel = {
@@ -206,16 +267,31 @@ export async function loadOpenAICompatible(
         }
       }
 
-      const completion = await client.chat.completions.create({
+      const options: ChatCompletionCreateParamsNonStreaming = {
         model: config.model,
         messages: toOpenAIMessages(input.messages),
-      });
+      };
 
-      const text = completion.choices[0]?.message?.content ?? "";
+      if (input.tools !== undefined && input.tools.length > 0) {
+        options.tools = toOpenAITools(input.tools);
+        options.tool_choice = "auto";
+      }
+
+      const completion = await client.chat.completions.create(options);
+
+      const choice = completion.choices[0]?.message;
+
+      const text = choice?.content ?? "";
+
+      const toolCalls = mapToolCalls(choice);
 
       const usage = usageFromCompletion(completion.usage);
 
-      return { text, ...(usage ? { usage } : {}) };
+      return {
+        text,
+        ...(toolCalls ? { toolCalls } : {}),
+        ...(usage ? { usage } : {}),
+      };
     },
   };
 

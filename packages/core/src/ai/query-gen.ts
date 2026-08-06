@@ -1,10 +1,34 @@
 import { z } from "zod";
 
-import type { ChatMessage, LoadedChatModel } from "../ai/types.js";
 import type { WorkingContextTurn } from "../context-assembly/types.js";
 
 import { generateStructured } from "./structured.js";
-import type { HistoryRequest, QueryGenResult } from "./types.js";
+import type { ChatMessage, LoadedChatModel } from "./types.js";
+
+/**
+ * Explicit historical request for temporal retrieval (§5.3).
+ * Produced by query-gen; consumed by retrieval assemble / get_history.
+ */
+export interface HistoryRequest {
+  entity: string;
+  /** Free-form relation label; omit to return all relations for the entity. */
+  relation?: string;
+}
+
+/** Forced query-gen output — input to multi-signal search (§5.2). */
+export interface QueryGenResult {
+  searchQueries: string[];
+  entityNames: string[];
+  /**
+   * Soft hint from query-gen that the question may benefit from history.
+   * May widen retrieval; never the sole gate to the historical layer (§5.3).
+   */
+  includeHistoryHint: boolean;
+  /**
+   * Explicit historical requests — load-bearing path into get_history (§5.3).
+   */
+  historyRequests: HistoryRequest[];
+}
 
 const QueryGenSchema = z.object({
   search_queries: z.array(z.string()).min(1),
@@ -22,23 +46,21 @@ const QueryGenSchema = z.object({
     .default([]),
 });
 
-export type QueryGenSchema = z.infer<typeof QueryGenSchema>;
-
 /**
  * Forced query-generation (§5.2 step 1).
  *
  * Mandatory pipeline stage — always runs; the model fills in queries/entities,
  * it cannot decline to search.
  *
- * Message shape matches the gate (§6): system → prior working-context turns as
- * real user/assistant messages → final user turn with the current message.
+ * Message shape (§6): system → prior working-context turns as real
+ * user/assistant messages → final user turn with the current message.
  * `recentContext` must already exclude the current unanswered burst.
  */
 export async function generateSearchQueries(
   chatModel: LoadedChatModel,
   message: string,
   recentContext: readonly WorkingContextTurn[],
-  /** Extra queries injected on a gate follow-up round. */
+  /** Extra queries injected on a memory-assess follow-up round. */
   followUpQueries: readonly string[] = [],
 ): Promise<QueryGenResult> {
   const followUpBlock =
