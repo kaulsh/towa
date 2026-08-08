@@ -1,17 +1,73 @@
 import type { Kysely } from "kysely";
+import { z } from "zod";
 
 import type { Database } from "../db/types.js";
 import type { ChatMessage, LoadedChatModel } from "../ai/types.js";
-import { generateStructured, z } from "../extraction/structured.js";
+import { generateStructured } from "../ai/structured.js";
 import { getLogger } from "../logging.js";
 
-import {
-  FACT_GOAL_IDS,
-  FACT_GOALS,
-  descriptionForGoal,
-  isFactGoalId,
-  type FactGoalId,
-} from "./fact-goals.js";
+/**
+ * Ordered fact goals for the adaptive `/init` interview (§6).
+ * Ids are stable checklist keys; descriptions guide the interviewer —
+ * they are not fixed question text.
+ */
+const FACT_GOALS = [
+  {
+    id: "preferred_name",
+    description: "What they like to be called",
+  },
+  {
+    id: "location_timezone",
+    description: "Where they live / work and their timezone or daily rhythm",
+  },
+  {
+    id: "work_or_study",
+    description: "What they do for work or study",
+  },
+  {
+    id: "important_people",
+    description: "People who matter (family, partner, close friends, colleagues)",
+  },
+  {
+    id: "interests_hobbies",
+    description: "Interests, hobbies, or recurring topics they care about",
+  },
+  {
+    id: "current_focus",
+    description: "What they are focused on right now (projects, goals, seasons of life)",
+  },
+  {
+    id: "communication_prefs",
+    description: "How they prefer replies (length, tone, formality, emoji, etc.)",
+  },
+  {
+    id: "pets_or_home",
+    description: "Pets, living situation, or home context worth remembering",
+  },
+  {
+    id: "health_or_routines",
+    description: "Standing health notes or daily routines they want remembered (only if volunteered)",
+  },
+  {
+    id: "want_remembered",
+    description: "Anything else they explicitly want the agent to never forget",
+  },
+] as const;
+
+type FactGoalId = (typeof FACT_GOALS)[number]["id"];
+
+const FACT_GOAL_IDS: readonly FactGoalId[] = FACT_GOALS.map((g) => g.id);
+
+const GOAL_ID_SET = new Set<string>(FACT_GOAL_IDS);
+
+function isFactGoalId(id: string): id is FactGoalId {
+  return GOAL_ID_SET.has(id);
+}
+
+function descriptionForGoal(id: FactGoalId): string {
+  const goal = FACT_GOALS.find((g) => g.id === id);
+  return goal?.description ?? id;
+}
 
 /** Soft target for interviewer pacing (prompt guidance only). */
 export const INIT_INTERVIEW_SOFT_TARGET_TURNS = 10;
@@ -288,7 +344,12 @@ async function runInterviewer(input: {
     { role: "user", content: input.userContent },
   ];
 
-  return generateStructured(input.chatModel, messages, InterviewerOutputSchema);
+  const { value } = await generateStructured(
+    input.chatModel,
+    messages,
+    InterviewerOutputSchema,
+  );
+  return value;
 }
 
 export async function cancelInitInterview(

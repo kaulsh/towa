@@ -1,6 +1,6 @@
 import type { ChatMessage, LoadedChatModel } from "../ai/types.js";
 
-import { generateStructured } from "./structured.js";
+import { generateStructured } from "../ai/structured.js";
 import {
   EpisodeExtractionSchema,
   type EpisodeExtraction,
@@ -42,7 +42,12 @@ export async function extractEpisodeKnowledge(
     },
   ];
 
-  return generateStructured(chatModel, messages, EpisodeExtractionSchema);
+  const { value } = await generateStructured(
+    chatModel,
+    messages,
+    EpisodeExtractionSchema,
+  );
+  return value;
 }
 
 function formatTranscript(turns: EpisodeTurn[]): string {

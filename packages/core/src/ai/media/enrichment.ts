@@ -1,13 +1,13 @@
 import type { Kysely } from "kysely";
 
-import type { InboundMessage, MediaRef } from "../messages.js";
-import type { Database } from "../db/types.js";
-import type { ChatMessage, LoadedChatModel, MessagePart } from "../ai/types.js";
-import { getMediaBytes } from "../media-byte-cache.js";
-import { appendRawLogEdit } from "../raw-log/index.js";
-import type { ResolvedTurn } from "../raw-log/resolve-turns.js";
+import type { InboundMessage, MediaRef } from "../../messages.js";
+import type { Database } from "../../db/types.js";
+import type { ChatMessage, LoadedChatModel, MessagePart } from "../types.js";
+import { getMediaBytes } from "./byte-cache.js";
+import { appendRawLogEdit } from "../../raw-log/index.js";
+import type { ResolvedTurn } from "../../raw-log/resolve-turns.js";
 
-import type { EpisodeTurn } from "./types.js";
+import type { EpisodeTurn } from "../../extraction/types.js";
 
 /** True when content already has a successful durable media text artifact (§7.3). */
 export function contentHasMediaArtifact(content: string): boolean {
@@ -181,7 +181,7 @@ export async function captionAndPersistInboundMedia(
     }
 
     const artifact = await describeMedia(media, chatModel);
-    
+
     artifactsByMessageId.set(msg.messageId, artifact);
 
     const wireBase = original.content.trim();

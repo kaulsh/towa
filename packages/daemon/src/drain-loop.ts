@@ -1,11 +1,11 @@
-import { getLogger } from "@towa/core";
-
 import {
-  processNextExtraction,
-  type ProcessNextExtractionDeps,
-} from "./process-next-extraction.js";
+  listResumableExtractions,
+  runExtraction,
+  getLogger,
+  type RunExtractionDeps,
+} from "@towa/core";
 
-export interface ExtractionDrainLoopOptions extends ProcessNextExtractionDeps {
+export interface ExtractionDrainLoopOptions extends RunExtractionDeps {
   /** Poll interval when the queue is idle. Default 1000ms. */
   pollIntervalMs?: number;
 }
@@ -16,8 +16,51 @@ export interface ExtractionDrainLoopHandle {
 }
 
 /**
+ * Claim at most one pending episode, run extraction end-to-end, update queue status.
+ * Returns whether work was performed. Caller owns scheduling/polling/shutdown.
+ *
+ * Daemon-owned tick that composes core KG/queue primitives (§4.2). On success:
+ * episode is marked `done` inside `runExtraction`. On failure: status stays
+ * `pending`/`in_progress` for a later retry and the error is rethrown so the
+ * caller can back off. No LLM work runs inside an open SQLite write transaction.
+ */
+async function processNextExtraction(
+  deps: RunExtractionDeps,
+): Promise<"worked" | "idle"> {
+  const { db, chatModel, embeddingModel } = deps;
+  const log = getLogger("process-next-extraction");
+
+  const batch = await listResumableExtractions(db);
+  const row = batch[0];
+  if (!row) {
+    return "idle";
+  }
+
+  log.info(
+    { episodeId: row.episodeId, status: row.status },
+    "extracting episode",
+  );
+
+  try {
+    await runExtraction(row.episodeId, {
+      db,
+      chatModel,
+      embeddingModel,
+    });
+    log.info({ episodeId: row.episodeId }, "extraction done");
+    return "worked";
+  } catch (err) {
+    log.error(
+      { err, episodeId: row.episodeId },
+      "extraction failed; leaving status for retry",
+    );
+    throw err;
+  }
+}
+
+/**
  * Daemon-owned extraction poll loop (§4.2).
- * Repeatedly calls local `processNextExtraction`, which composes core's
+ * Repeatedly calls `processNextExtraction`, which composes core's
  * `runExtraction` + queue helpers; does not own KG write logic itself.
  */
 export function startExtractionDrainLoop(

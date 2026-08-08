@@ -11,3 +11,8 @@ export type {
   RawLogRole,
   SqliteBoolean,
 } from "./types.js";
+export {
+  embeddingToBlob,
+  blobToEmbedding,
+  cosineSimilarity,
+} from "./embeddings.js";

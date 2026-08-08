@@ -9,21 +9,23 @@ import type { Database } from "../db/types.js";
 import type {
   LoadedChatModel,
   LoadedEmbeddingModel,
-  MessagePart,
   ToolDefinition,
 } from "../ai/types.js";
-import { loadRecentWorkingTurns } from "../context-assembly/load-turns.js";
 import {
+  loadRecentWorkingTurns,
   nextPackingHeadroomState,
   type PackingHeadroomState,
 } from "../context-assembly/index.js";
-import { captionAndPersistInboundMedia } from "../extraction/media.js";
+import { captionAndPersistInboundMedia } from "../ai/media/index.js";
 import { getLogger } from "../logging.js";
-import { runPipeline, RunPipelineResult } from "./pipeline.js";
-import { buildTurnMediaRefs } from "../tools/registry.js";
+import { runPipeline, type RunPipelineResult } from "./pipeline.js";
+import { buildTurnMediaRefs } from "../tools/index.js";
 import type { ToolExecutor } from "../tools/types.js";
 
-import { createBurstDebouncer, type BurstDebouncer } from "./debounce.js";
+import {
+  createBurstDebouncer,
+  type BurstDebouncerOptions,
+} from "./debounce.js";
 import {
   cancelInitInterview,
   continueInitInterview,
@@ -31,24 +33,22 @@ import {
   saveInitInterviewState,
   startOrResumeInitInterview,
 } from "./init-interview.js";
-import { parseSlashCommand, START_HELP } from "./slash-commands.js";
+import { buildUserTurnContent } from "./user-turn-content.js";
 
 /** Idle after last message before firing — long enough for a second thought. */
 const DEFAULT_DEBOUNCE_IDLE_MS = 2000;
 /** Cap from first message in a burst. */
 const DEFAULT_DEBOUNCE_MAX_WAIT_MS = 8000;
 
-export interface HarnessDebounceOptions {
-  idleMs: number;
-  maxWaitMs: number;
-}
+export type HarnessDebounceOptions = BurstDebouncerOptions;
 
 export interface CreateHarnessDeps {
   db: Kysely<Database>;
   chatModel: LoadedChatModel;
   embeddingModel: LoadedEmbeddingModel;
   systemPrompt?: string;
-  debounce?: Partial<HarnessDebounceOptions>;
+  /** When omitted, harness defaults apply. When present, both fields required. */
+  debounce?: BurstDebouncerOptions;
   /** Passed through to working-context session boundary (§6). */
   sessionIdleThresholdSec?: number;
   /** Enabled built-in tools for answer generate (§5.4). */
@@ -60,7 +60,7 @@ export type TurnCompletedHandler = (result: TurnResult) => void | Promise<void>;
 
 export interface Harness {
   /** Clear debounce timers. */
-  clear(): Promise<void>;
+  clear(): void;
   /**
    * Accept an inbound user message into debounce/queue (variant 1).
    * Resolves when the message is accepted — does **not** wait for generation
@@ -69,11 +69,11 @@ export interface Harness {
    */
   handleTurn(msg: InboundMessage): Promise<void>;
   /**
-   * Register a delivery listener. Fires once per logical turn with outbound
-   * messages. Async handlers are awaited before the next queued turn starts
-   * (delivery backpressure). Returns an unsubscribe function.
+   * Set the delivery listener (replaces any prior). Fires once per logical
+   * turn with outbound messages. Async handlers are awaited before the next
+   * queued turn starts (delivery backpressure).
    */
-  onTurnCompleted(handler: TurnCompletedHandler): () => void;
+  onTurnCompleted(handler: TurnCompletedHandler): void;
 }
 
 interface PendingTurn {
@@ -81,151 +81,42 @@ interface PendingTurn {
   messages: InboundMessage[];
 }
 
-/** Text for query-gen / logs, plus multimodal parts for reply-path generate. */
-interface UserTurnContent {
-  text: string;
-  mediaParts: MessagePart[];
-}
+type ParsedSlashCommand =
+  | { kind: "start" }
+  | { kind: "init" }
+  | { kind: "init_cancel" };
 
-function contentTextWithReply(msg: InboundMessage): string {
-  let base = msg.content.trim();
-
-  if (msg.replyTo) {
-    // Rebuild reply prefix from typed field so generation does not depend on
-    // parsing the durable content annotation.
-    const withoutAnnotation = base.replace(
-      /^\[reply to #\d+(?:: "[^"]*")?\]\s*/,
-      "",
-    );
-    const replyPrefix =
-      msg.replyTo.quote !== undefined
-        ? `[reply to #${msg.replyTo.messageId}: "${msg.replyTo.quote}"]`
-        : `[reply to #${msg.replyTo.messageId}]`;
-    base = withoutAnnotation
-      ? `${replyPrefix} ${withoutAnnotation}`
-      : replyPrefix;
-  }
-
-  return base;
-}
+const START_HELP = [
+  "Talk to me like a normal conversation — I remember durable personal details over time.",
+  "",
+  "Commands:",
+  "  /init — short adaptive interview to capture useful facts about you",
+  "  /init cancel — stop an in-progress init interview",
+].join("\n");
 
 /**
- * Multimodal image parts for reply-path `generate()` when vision is enabled
- * and bytes are present (§7.3 / §8.1).
- *
- * Voice notes are **not** attached here — sync caption transcribes them to
- * text (`[audio transcript]: …`) and that text is what reaches the model.
+ * Parse a leading slash command. Normalizes `/cmd@BotName` → `/cmd`.
+ * Returns null when the text is not a recognized harness command.
  */
-function mediaPartsForGeneration(
-  msg: InboundMessage,
-  chatModel: LoadedChatModel,
-): MessagePart[] {
-  const media = msg.media;
-  if (!media?.data) return [];
+function parseSlashCommand(text: string): ParsedSlashCommand | null {
+  const trimmed = text.trim();
+  if (!trimmed.startsWith("/")) return null;
 
-  const data = Buffer.from(media.data, "base64");
-  if (media.kind === "image" && chatModel.capabilities.vision) {
-    return [{ type: "image", data, mimeType: media.mimeType }];
+  const match = /^\/([^\s@]+)(?:@\S+)?(?:\s+(.*))?$/s.exec(trimmed);
+  if (!match) return null;
+
+  const cmd = match[1]!.toLowerCase();
+  const args = (match[2] ?? "").trim();
+
+  if (cmd === "start") return { kind: "start" };
+  if (cmd === "init") {
+    if (args.toLowerCase() === "cancel") return { kind: "init_cancel" };
+    return { kind: "init" };
   }
-  return [];
+  return null;
 }
 
-/**
- * Format a sync media artifact for reply-path generation.
- * Durable raw_log keeps `[audio transcript]:` / `[image description]:` markers;
- * the live prompt should read as user content, not a "please transcribe" job.
- */
-function formatArtifactForGeneration(artifact: string): string {
-  const audioPrefix = "[audio transcript]:";
-  if (artifact.startsWith(audioPrefix)) {
-    const spoken = artifact.slice(audioPrefix.length).trim();
-    return spoken.length > 0
-      ? `(voice note — already transcribed) ${spoken}`
-      : "(voice note — empty transcript)";
-  }
-  const imagePrefix = "[image description]:";
-  if (artifact.startsWith(imagePrefix)) {
-    const desc = artifact.slice(imagePrefix.length).trim();
-    return desc.length > 0
-      ? `(image — description) ${desc}`
-      : "(image — empty description)";
-  }
-  return artifact;
-}
-
-/**
- * Build user turn text (+ multimodal parts) for the reply path.
- * Query-gen / logging use `text`; answer generate uses `text` plus `mediaParts`.
- * When `mediaArtifacts` is set (sync caption), fold those into text.
- * Missing bytes or lacking capability → explicit text notes (no silent drop).
- */
-function buildUserTurnContent(
-  messages: readonly InboundMessage[],
-  chatModel: LoadedChatModel,
-  mediaArtifacts?: ReadonlyMap<string, string>,
-): UserTurnContent {
-  const textChunks: string[] = [];
-  const mediaParts: MessagePart[] = [];
-
-  for (const msg of messages) {
-    const base = contentTextWithReply(msg);
-    const parts = mediaPartsForGeneration(msg, chatModel);
-    mediaParts.push(...parts);
-    const artifact = mediaArtifacts?.get(msg.messageId);
-
-    if (!msg.media) {
-      if (base) textChunks.push(base);
-      else textChunks.push("(empty message)");
-      continue;
-    }
-
-    const { kind, data, fileName } = msg.media;
-    const nameNote = fileName ? ` "${fileName}"` : "";
-
-    if (!data) {
-      const note = `[user sent ${kind} media${nameNote}; content could not be loaded]`;
-      textChunks.push(base ? `${base}\n${note}` : note);
-      continue;
-    }
-
-    if (artifact) {
-      const formatted = formatArtifactForGeneration(artifact);
-      textChunks.push(base ? `${base}\n${formatted}` : formatted);
-      continue;
-    }
-
-    if (parts.length > 0) {
-      // Bytes go to generate(); keep a usable text stub for query-gen / FTS.
-      textChunks.push(
-        base ||
-          (kind === "image"
-            ? "(user sent an image)"
-            : kind === "audio"
-              ? "(user sent a voice note)"
-              : `(user sent ${kind})`),
-      );
-      continue;
-    }
-
-    const note = `[user sent ${kind} media${nameNote}; content not available in this reply path]`;
-    textChunks.push(base ? `${base}\n${note}` : note);
-  }
-
-  return {
-    text: textChunks.filter((t) => t.length > 0).join("\n"),
-    mediaParts,
-  };
-}
-
-/**
- * Programmatic agent-loop factory (§6, §7).
- * Callers (daemon / Telegram handlers) invoke harness methods; the harness
- * does not register channel callbacks, own transport, or run the drain worker.
- * Outbound delivery is via `onTurnCompleted` — no injected `send`.
- */
-function collectTurnMediaRefs(
-  messages: readonly InboundMessage[],
-): ReturnType<typeof buildTurnMediaRefs> {
+function collectTurnMediaRefs(messages: readonly InboundMessage[]) {
   const items: Array<{
     data: Buffer;
     mimeType: string;
@@ -245,6 +136,12 @@ function collectTurnMediaRefs(
   return buildTurnMediaRefs(items);
 }
 
+/**
+ * Programmatic agent-loop factory (§6, §7).
+ * Callers (daemon / Telegram handlers) invoke harness methods; the harness
+ * does not register channel callbacks, own transport, or run the drain worker.
+ * Outbound delivery is via `onTurnCompleted` — no injected `send`.
+ */
 export function createHarness(deps: CreateHarnessDeps): Harness {
   const {
     db,
@@ -257,9 +154,9 @@ export function createHarness(deps: CreateHarnessDeps): Harness {
   } = deps;
   const log = getLogger("harness");
 
-  const debounceOpts: HarnessDebounceOptions = {
-    idleMs: deps.debounce?.idleMs ?? DEFAULT_DEBOUNCE_IDLE_MS,
-    maxWaitMs: deps.debounce?.maxWaitMs ?? DEFAULT_DEBOUNCE_MAX_WAIT_MS,
+  const debounceOpts: BurstDebouncerOptions = deps.debounce ?? {
+    idleMs: DEFAULT_DEBOUNCE_IDLE_MS,
+    maxWaitMs: DEFAULT_DEBOUNCE_MAX_WAIT_MS,
   };
 
   const debounce = createBurstDebouncer(debounceOpts);
@@ -270,7 +167,7 @@ export function createHarness(deps: CreateHarnessDeps): Harness {
   const pending: PendingTurn[] = [];
   /** Messages that arrived for `inflightChatId` after its turn started. */
   const lateByChat = new Map<string, InboundMessage[]>();
-  const turnCompletedHandlers: TurnCompletedHandler[] = [];
+  let turnCompletedHandler: TurnCompletedHandler | null = null;
   /** Usage-relative headroom state per chat (§6). */
   const headroomByChat = new Map<string, PackingHeadroomState>();
 
@@ -322,18 +219,13 @@ export function createHarness(deps: CreateHarnessDeps): Harness {
     return [...messages, ...late];
   }
 
-  /** Notify listeners and await them (delivery backpressure before next turn). */
-  async function notifyTurnCompleted(result: TurnResult): Promise<void> {
-    for (const handler of turnCompletedHandlers) {
-      await handler(result);
-    }
-  }
-
   async function deliver(
     chatId: string,
     outbound: OutboundMessage[],
   ): Promise<void> {
-    await notifyTurnCompleted({ chatId, outbound });
+    if (turnCompletedHandler) {
+      await turnCompletedHandler({ chatId, outbound });
+    }
   }
 
   async function runTurn(messages: InboundMessage[]): Promise<void> {
@@ -352,15 +244,12 @@ export function createHarness(deps: CreateHarnessDeps): Harness {
           recordInRawLog: false,
         },
       ]);
-
       log.info({ chatId }, "queued /start help");
-
       return;
     }
 
     if (soleSlash?.kind === "init_cancel") {
       await cancelInitInterview(db, chatId);
-
       await deliver(chatId, [
         {
           type: "text",
@@ -368,23 +257,18 @@ export function createHarness(deps: CreateHarnessDeps): Harness {
           recordInRawLog: false,
         },
       ]);
-
       log.info({ chatId }, "init interview cancelled");
-
       return;
     }
 
     if (soleSlash?.kind === "init") {
       log.info({ chatId }, "starting/resuming init interview");
-
       const reply = await startOrResumeInitInterview({
         db,
         chatModel,
         chatId,
       });
-
       await deliver(chatId, [{ type: "text", text: reply }]);
-
       return;
     }
 
@@ -402,41 +286,31 @@ export function createHarness(deps: CreateHarnessDeps): Harness {
 
       // Snapshot so late-arrival regenerates don't double-count turn_count / goals.
       const stateBefore = await loadInitInterviewState(db, chatId);
-
       let reply = "";
-
       let attempt = 0;
 
       for (;;) {
         if (attempt > 0) {
           await saveInitInterviewState(db, stateBefore);
         }
-
         attempt += 1;
-
         const answerText = buildUserTurnContent(turnMessages, chatModel).text;
-
         reply = await continueInitInterview({
           db,
           chatModel,
           chatId,
           userMessage: answerText,
         });
-
         const next = takeLateArrivals(chatId, turnMessages);
-
         if (next === turnMessages) break;
-
         turnMessages = next;
       }
 
       await deliver(chatId, [{ type: "text", text: reply }]);
-
       return;
     }
 
     const hasInboundMedia = turnMessages.some((m) => Boolean(m.media));
-
     let mediaArtifacts: ReadonlyMap<string, string> | undefined;
 
     if (hasInboundMedia) {
@@ -460,18 +334,10 @@ export function createHarness(deps: CreateHarnessDeps): Harness {
       );
     }
 
-    const userTurn = buildUserTurnContent(
-      turnMessages,
-      chatModel,
-      mediaArtifacts,
-    );
-
     log.info(
       {
         chatId,
         burstSize: turnMessages.length,
-        contentPreview: userTurn.text.slice(0, 80),
-        mediaPartCount: userTurn.mediaParts.length,
       },
       "running forced retrieval pipeline",
     );
@@ -480,7 +346,6 @@ export function createHarness(deps: CreateHarnessDeps): Harness {
 
     do {
       const recentTurns = await loadRecentWorkingTurns(db);
-
       const turn = buildUserTurnContent(
         turnMessages,
         chatModel,
@@ -512,9 +377,7 @@ export function createHarness(deps: CreateHarnessDeps): Harness {
       }
 
       const next = takeLateArrivals(chatId, turnMessages);
-
       if (next === turnMessages) break;
-
       turnMessages = next;
 
       // Late arrivals may include new media — re-caption before regenerating.
@@ -579,7 +442,7 @@ export function createHarness(deps: CreateHarnessDeps): Harness {
   }
 
   return {
-    async clear(): Promise<void> {
+    clear(): void {
       debounce.clearAll();
       log.info("harness timers cleared");
     },
@@ -603,12 +466,8 @@ export function createHarness(deps: CreateHarnessDeps): Harness {
       });
     },
 
-    onTurnCompleted(handler: TurnCompletedHandler): () => void {
-      turnCompletedHandlers.push(handler);
-      return () => {
-        const idx = turnCompletedHandlers.indexOf(handler);
-        if (idx >= 0) turnCompletedHandlers.splice(idx, 1);
-      };
+    onTurnCompleted(handler: TurnCompletedHandler): void {
+      turnCompletedHandler = handler;
     },
   };
 }

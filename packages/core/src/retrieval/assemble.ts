@@ -9,8 +9,6 @@ import {
   loadCurrentFactsForEntities,
 } from "./temporal.js";
 import type {
-  AssembledRetrievedContext,
-  EpisodeTurns,
   HistoryRequest,
   KgFact,
   QueryGenResult,
@@ -24,11 +22,16 @@ export interface AssembleRetrievedContextInput {
   /** Max RRF-ranked episodes to include (§5.2 fixed top-K). */
   retrievedTopK: number;
   nowSec?: number;
-  /**
-   * When true (soft hint only), also attach historical facts for entity_names
-   * via get_history. Explicit history_requests always trigger get_history.
-   */
-  widenHistoryFromHint?: boolean;
+}
+
+interface EpisodeTurns {
+  episodeId: number;
+  turns: Array<{
+    id: number;
+    role: "user" | "assistant";
+    content: string;
+    timestamp: number;
+  }>;
 }
 
 /**
@@ -39,7 +42,7 @@ export interface AssembleRetrievedContextInput {
  */
 export async function assembleRetrievedContext(
   input: AssembleRetrievedContextInput,
-): Promise<AssembledRetrievedContext> {
+): Promise<{ formattedBlocks: string }> {
   const nowSec = input.nowSec ?? Math.floor(Date.now() / 1000);
   const episodes: EpisodeTurns[] = [];
   const limit = Math.max(0, input.retrievedTopK);
@@ -73,11 +76,7 @@ export async function assembleRetrievedContext(
   ]);
 
   const historyRequests: HistoryRequest[] = [...input.queryGen.historyRequests];
-  if (
-    input.widenHistoryFromHint &&
-    input.queryGen.includeHistoryHint &&
-    historyRequests.length === 0
-  ) {
+  if (input.queryGen.includeHistoryHint && historyRequests.length === 0) {
     // Soft hint only — widen with entity names; never sole gate (§5.3).
     for (const entity of input.queryGen.entityNames) {
       historyRequests.push({ entity });
@@ -101,12 +100,7 @@ export async function assembleRetrievedContext(
     uniqueHistorical,
   );
 
-  return {
-    episodes,
-    currentFacts,
-    historicalFacts: uniqueHistorical,
-    formattedBlocks,
-  };
+  return { formattedBlocks };
 }
 
 async function loadEpisodeTurns(
@@ -156,7 +150,7 @@ function formatFactLine(fact: KgFact): string {
 /**
  * Present current vs historical facts as distinct labeled blocks (§5.3).
  */
-export function formatRetrievedBlocks(
+function formatRetrievedBlocks(
   episodes: readonly EpisodeTurns[],
   currentFacts: readonly KgFact[],
   historicalFacts: readonly KgFact[],

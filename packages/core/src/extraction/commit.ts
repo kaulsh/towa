@@ -1,10 +1,9 @@
 import type { Kysely } from "kysely";
 
 import type { Database } from "../db/types.js";
+import { embeddingToBlob } from "../db/embeddings.js";
+import { indexGistForFts } from "../retrieval/fts-index.js";
 import { markExtractionDone } from "./queue.js";
-import { writeEpisodeGist } from "./write-gist.js";
-
-import { embeddingToBlob } from "./embeddings.js";
 import type { PreparedEdgeWrite, PreparedNodeWrite } from "./types.js";
 
 export interface ExtractionCommitInput {
@@ -23,6 +22,12 @@ export async function commitExtraction(
   db: Kysely<Database>,
   input: ExtractionCommitInput,
 ): Promise<void> {
+  // Persist episode gist + embedding (§2.4) — unconditional at the call-site.
+  const embeddingBlob =
+    input.gistEmbedding.length > 0
+      ? embeddingToBlob(input.gistEmbedding)
+      : null;
+
   await db.transaction().execute(async (trx) => {
     for (const node of input.newNodes) {
       await trx
@@ -34,9 +39,7 @@ export async function commitExtraction(
           aliases: JSON.stringify(node.aliases),
           attributes: JSON.stringify(node.attributes),
           embedding:
-            node.embedding.length > 0
-              ? embeddingToBlob(node.embedding)
-              : null,
+            node.embedding.length > 0 ? embeddingToBlob(node.embedding) : null,
           provenance: JSON.stringify(node.provenance),
         })
         .execute();
@@ -67,11 +70,22 @@ export async function commitExtraction(
         .execute();
     }
 
-    await writeEpisodeGist(trx, {
-      episodeId: input.episodeId,
-      gistText: input.gistText,
-      embedding: input.gistEmbedding,
-    });
+    await trx
+      .insertInto("episode_gists")
+      .values({
+        episode_id: input.episodeId,
+        gist_text: input.gistText,
+        embedding: embeddingBlob,
+      })
+      .onConflict((oc) =>
+        oc.column("episode_id").doUpdateSet({
+          gist_text: input.gistText,
+          embedding: embeddingBlob,
+        }),
+      )
+      .execute();
+
+    await indexGistForFts(trx, input.episodeId, input.gistText);
 
     await markExtractionDone(trx, input.episodeId);
   });

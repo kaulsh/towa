@@ -26,8 +26,3 @@ export function putMediaBytes(
 export function getMediaBytes(fileId: string): CachedMediaBytes | null {
   return cache.get(fileId) ?? null;
 }
-
-/** Clear the process-local cache (tests / shutdown). */
-export function clearMediaByteCache(): void {
-  cache.clear();
-}

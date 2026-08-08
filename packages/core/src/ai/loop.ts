@@ -14,38 +14,28 @@ import type {
 } from "./types.js";
 
 /** Hard cap on answer-generation tool rounds (§5.4). */
-export const TOOL_MAX_ROUNDS = 8;
-
-export interface AssessUsage {
-  promptTokens?: number;
-  completionTokens?: number;
-}
+const TOOL_MAX_ROUNDS = 8;
 
 /** Memory sufficiency assess — no user-facing answer (§5.2). */
 export interface AssessSufficient {
   insufficient: false;
-  usage?: AssessUsage;
+  usage?: GenerateUsage;
 }
 
 export interface AssessInsufficient {
   insufficient: true;
   followUpQueries: string[];
-  usage?: AssessUsage;
+  usage?: GenerateUsage;
 }
 
 export type AssessResult = AssessSufficient | AssessInsufficient;
 
-export interface AnswerUsage {
-  promptTokens?: number;
-  completionTokens?: number;
-}
-
 export interface AnswerResult {
   answer: string;
-  usage?: AnswerUsage;
+  usage?: GenerateUsage;
 }
 
-export interface GenerateWithToolsResult {
+interface GenerateWithToolsResult {
   text: string;
   usage?: GenerateUsage;
   roundsUsed: number;
@@ -241,7 +231,7 @@ export interface GenerateAnswerInput {
  *
  * Does not combine with structured `schema` on the same generate call.
  */
-export async function generateWithTools(input: {
+async function generateWithTools(input: {
   chatModel: LoadedChatModel;
   messages: ChatMessage[];
   tools: ToolDefinition[];
@@ -263,6 +253,7 @@ export async function generateWithTools(input: {
       messages,
       tools: input.tools,
     });
+    
     if (out.usage) {
       lastUsage = out.usage;
     }

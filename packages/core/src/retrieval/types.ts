@@ -3,9 +3,6 @@
  * LLM orchestration types live under `ai/` (query-gen, assess, answer).
  */
 
-/** Hard cap on memory-sufficiency follow-up rounds (§5.2). */
-export const GATE_MAX_ROUNDS = 3;
-
 /** Standard RRF constant. */
 export const RRF_K = 60;
 
@@ -43,27 +40,6 @@ export interface KgFact {
   validTo: number;
   /** True when valid_from <= now < valid_to. */
   isCurrent: boolean;
-}
-
-export interface EpisodeTurns {
-  episodeId: number;
-  turns: Array<{
-    id: number;
-    role: "user" | "assistant";
-    content: string;
-    timestamp: number;
-  }>;
-}
-
-export interface AssembledRetrievedContext {
-  /** Verbatim raw turns from RRF-ranked episodes, in rank order. */
-  episodes: EpisodeTurns[];
-  /** Currently-valid KG facts. */
-  currentFacts: KgFact[];
-  /** Historical KG facts (from get_history / widened retrieval). */
-  historicalFacts: KgFact[];
-  /** Formatted blocks ready to inject into the generation prompt. */
-  formattedBlocks: string;
 }
 
 /** Re-export query-gen shapes so retrieval consumers can import from one place. */

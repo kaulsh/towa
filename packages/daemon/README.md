@@ -1,7 +1,7 @@
 # Towa daemon (`@towa/daemon`)
 
 Configures and starts the Towa harness against Telegram. The daemon owns bot
-callbacks, `processNextExtraction`, the extraction poll loop, and the control
+callbacks, the extraction drain loop, and the control
 plane (`POST /command`, `GET /logs`). Core stays library-like.
 
 ## Prerequisites

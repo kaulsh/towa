@@ -11,7 +11,7 @@ export interface PendingExtractionRow {
 /**
  * Insert a pending_extraction row with status='pending' on episode close.
  * Idempotent on conflict: if the episode is already queued, leave it alone
- * (re-enqueue of a done/in_progress row is a no-op here — Track D owns resume).
+ * (re-enqueue of a done/in_progress row is a no-op here — resume via listResumableExtractions).
  */
 export async function enqueuePendingExtraction(
   db: Kysely<Database>,

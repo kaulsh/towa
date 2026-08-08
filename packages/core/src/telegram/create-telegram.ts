@@ -2,9 +2,12 @@ import type { Message } from "telegraf/types";
 import { Telegraf } from "telegraf";
 import type { Kysely } from "kysely";
 
-import { appendRawLogMessage } from "../raw-log/index.js";
-import { closeEpisode, deriveEpisodeBoundary } from "../episodes/index.js";
-import { putMediaBytes } from "../media-byte-cache.js";
+import {
+  appendRawLogMessage,
+  closeEpisode,
+  deriveEpisodeBoundary,
+} from "../raw-log/index.js";
+import { putMediaBytes } from "../ai/media/index.js";
 import { enqueuePendingExtraction } from "../extraction/queue.js";
 import { getLogger } from "../logging.js";
 import type { Database } from "../db/types.js";

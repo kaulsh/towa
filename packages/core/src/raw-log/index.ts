@@ -14,6 +14,12 @@ export {
   resolveTurnsForIdRange,
 } from "./resolve-turns.js";
 export type { ResolvedTurn } from "./resolve-turns.js";
+export {
+  closeEpisode,
+  deriveEpisodeBoundary,
+  type CloseEpisodeInput,
+  type EpisodeBoundary,
+} from "./episodes.js";
 
 export interface AppendRawLogMedia {
   fileId: string;

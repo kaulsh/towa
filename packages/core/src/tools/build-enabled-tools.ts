@@ -1,7 +1,7 @@
 import type { ToolDefinition } from "../ai/types.js";
 
 import { createFsTools, type FsToolOptions } from "./fs.js";
-import type { BoundTool, ToolExecutor } from "./types.js";
+import type { ToolExecutor, TurnMediaRef } from "./types.js";
 import {
   createWebFetchTool,
   createWebSearchTool,
@@ -19,29 +19,25 @@ export interface BuildEnabledToolsInput {
 
 /**
  * Assemble the fixed built-in tool set from config providers / secrets (§5.4).
- * No plugin registry — callers pass only what config enabled.
+ * Closed switch over YAML-enabled builtins — not a plugin registry.
  */
 export function buildEnabledTools(input: BuildEnabledToolsInput): {
   definitions: ToolDefinition[];
   executors: Map<string, ToolExecutor>;
-  bound: BoundTool[];
 } {
   const definitions: ToolDefinition[] = [];
   const executors = new Map<string, ToolExecutor>();
-  const bound: BoundTool[] = [];
 
   if (input.webSearch) {
     const tool = createWebSearchTool(input.webSearch);
     definitions.push(tool.definition);
     executors.set(tool.definition.name, tool.execute);
-    bound.push({ definition: tool.definition, execute: tool.execute });
   }
 
   if (input.webFetch) {
     const tool = createWebFetchTool(input.webFetch);
     definitions.push(tool.definition);
     executors.set(tool.definition.name, tool.execute);
-    bound.push({ definition: tool.definition, execute: tool.execute });
   }
 
   if (input.fs) {
@@ -50,11 +46,10 @@ export function buildEnabledTools(input: BuildEnabledToolsInput): {
       definitions.push(def);
       const exec = tools.executors.get(def.name)!;
       executors.set(def.name, exec);
-      bound.push({ definition: def, execute: exec });
     }
   }
 
-  return { definitions, executors, bound };
+  return { definitions, executors };
 }
 
 export function buildTurnMediaRefs(
@@ -64,7 +59,7 @@ export function buildTurnMediaRefs(
     kind: string;
     fileName?: string;
   }>,
-): import("./types.js").TurnMediaRef[] {
+): TurnMediaRef[] {
   return items.map((item, i) => ({
     ref: `media:${i}`,
     kind: item.kind,

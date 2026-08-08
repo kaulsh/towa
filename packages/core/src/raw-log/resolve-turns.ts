@@ -22,7 +22,7 @@ export function mediaRefFromColumns(
 }
 
 /**
- * One logical turn after edit-aware resolution (§2.1 / Track F).
+ * One logical turn after edit-aware resolution (§2.1).
  *
  * `id` is always the original raw_log id (never an edit row id). Edit rows
  * that fall outside episode `[start_msg_id, end_msg_id]` are folded in via

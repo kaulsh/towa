@@ -6,7 +6,7 @@ import type { Database } from "../db/types.js";
 import type { FtsSourceType } from "./types.js";
 
 /**
- * Upsert a raw_log row into search_fts (Phase 0 created the table; Track C owns populate).
+ * Upsert a raw_log row into search_fts.
  * FTS5 has no native UPSERT by source_id — delete-then-insert.
  */
 export async function indexRawLogForFts(

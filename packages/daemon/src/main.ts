@@ -142,17 +142,6 @@ export async function runDaemon(configFilePath: string): Promise<void> {
   );
 }
 
-/** @deprecated Prefer `towa run --config-file`. Kept for package scripts during transition. */
-export async function mainFromEnvConfig(): Promise<void> {
-  const path = process.env.TOWA_CONFIG_FILE?.trim();
-  if (!path) {
-    throw new Error(
-      "TOWA_CONFIG_FILE is required when starting via package scripts. Prefer: towa run --config-file PATH",
-    );
-  }
-  await runDaemon(path);
-}
-
 // Allow `node dist/main.js` when TOWA_CONFIG_FILE is set (dev scripts).
 if (
   process.argv[1]?.endsWith("main.js") ||

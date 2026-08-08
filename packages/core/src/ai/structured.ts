@@ -1,4 +1,4 @@
-import type { ZodType } from "zod";
+import { type z, type ZodTypeAny } from "zod";
 
 import type {
   ChatMessage,
@@ -18,17 +18,17 @@ export interface StructuredGenerateResult<T> {
  * `generate()`. Otherwise: prompt for JSON, parse, validate; on failure retry
  * once with the parse error included. Forwards provider usage when present.
  */
-export async function generateStructured<T>(
+export async function generateStructured<S extends ZodTypeAny>(
   chatModel: LoadedChatModel,
   messages: ChatMessage[],
-  schema: ZodType<T>,
+  schema: S,
   options: { schemaDescription?: string } = {},
-): Promise<StructuredGenerateResult<T>> {
+): Promise<StructuredGenerateResult<z.output<S>>> {
   if (chatModel.capabilities.structuredOutput) {
     const out = await chatModel.generate({ messages, schema });
     if (out.structured !== undefined) {
       return {
-        value: schema.parse(out.structured),
+        value: schema.parse(out.structured) as z.output<S>,
         ...(out.usage ? { usage: out.usage } : {}),
       };
     }
@@ -73,10 +73,13 @@ export async function generateStructured<T>(
   }
 }
 
-function parseAndValidate<T>(text: string, schema: ZodType<T>): T {
+function parseAndValidate<S extends ZodTypeAny>(
+  text: string,
+  schema: S,
+): z.output<S> {
   const json = extractJson(text);
   const parsed: unknown = JSON.parse(json);
-  return schema.parse(parsed);
+  return schema.parse(parsed) as z.output<S>;
 }
 
 /** Strip optional markdown fences and grab the outermost JSON object/array. */

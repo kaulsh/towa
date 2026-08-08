@@ -364,10 +364,9 @@ harness.onTurnCompleted(async (result) => {
   }
 });
 
-// Daemon owns processNextExtraction + the poll loop; core exports runExtraction / queue helpers.
+// Daemon owns the extraction tick + poll loop; core exports runExtraction / queue helpers.
 startExtractionDrainLoop({ db, chatModel, embeddingModel, … });
 
-harness.start();
 telegram.start((msg) => harness.handleTurn(msg));
 ```
 
@@ -519,26 +518,25 @@ towa/
   packages/
     core/                   # @towa/core — library
       src/
-        raw-log/            # append-only writer, edit/delete handling
-        episodes/           # boundary derivation (shared with Telegram write path)
+        raw-log/            # append-only writer, edit/delete, episode boundaries
         extraction/         # KG nodes/edges, entity resolution, gist write, pending_extraction queue, runExtraction
         ai/
           loaders/          # loadOpenAICompatible, loadLocalEmbeddings, …
           types.ts          # LoadedChatModel / LoadedEmbeddingModel
           structured.ts     # generateStructured (capability fallback)
           query-gen.ts      # forced memory query generation
-          loop.ts           # assessMemorySufficiency, generateAnswer, generateWithTools
-        retrieval/          # FTS / vec / graph search, RRF, assemble, pipeline orchestration
+          loop.ts           # assessMemorySufficiency, generateAnswer (+ private tool loop)
+          media/            # process-local byte cache + vision/audio caption enrichment
+        retrieval/          # FTS / vec / graph search, RRF, assemble
         tools/              # built-in web + FS tool defs/executors (no generate loop)
-        context-assembly/   # working-context window, session boundaries
+        context-assembly/   # working-context window, session boundaries, packing governor
         harness/            # programmatic agent loop (handleTurn, onTurnCompleted, …)
-        media-byte-cache.ts # process-local media bytes (inbound download → enrichment)
         telegram/           # Telegraf runtime: createTelegram → daemon handlers
         messages.ts         # shared InboundMessage / OutboundMessage / MediaRef / TurnResult
         db/
           migrations/
     daemon/                 # @towa/daemon — Telegram daemon + `towa` CLI bin
-                            # owns processNextExtraction tick + drain loop + control HTTP
+                            # owns extraction drain loop + control HTTP
                             # CLI: `towa run|stop|status|ping|logs` (run is local; others talk to control plane)
   evals/
     gold-sets/

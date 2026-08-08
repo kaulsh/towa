@@ -95,9 +95,9 @@ export interface InitInterviewTable {
 }
 
 /**
- * FTS5 virtual table — not queried via typed Kysely inserts in Phase 0;
+ * FTS5 virtual table — not queried via typed Kysely inserts;
  * included so the Database interface documents every table that exists.
- * Track C owns populate/query. Use `sql` fragments for MATCH queries.
+ * Use `sql` fragments for MATCH queries.
  */
 export interface SearchFtsTable {
   content: string;

@@ -5,7 +5,6 @@ import {
   assessMemorySufficiency,
   generateAnswer,
   generateSearchQueries,
-  type QueryGenResult,
 } from "../ai/index.js";
 import type {
   LoadedChatModel,
@@ -24,9 +23,10 @@ import { getLogger } from "../logging.js";
 import type { ToolExecutor, TurnMediaRef } from "../tools/types.js";
 
 import { assembleRetrievedContext } from "../retrieval/assemble.js";
-import { multiSignalSearch } from "../retrieval/multi-signal.js";
-import { GATE_MAX_ROUNDS } from "../retrieval/types.js";
-import type { AssembledRetrievedContext } from "../retrieval/types.js";
+import { multiSignalSearch } from "../retrieval/search.js";
+
+/** Hard cap on memory-sufficiency follow-up rounds (§5.2). */
+export const GATE_MAX_ROUNDS = 3;
 
 export interface RunPipelineInput {
   db: Kysely<Database>;
@@ -54,11 +54,8 @@ export interface RunPipelineInput {
    * Cold start / missing → default top-K.
    */
   headroomState?: PackingHeadroomState;
-  /** Override memory assess round cap (default GATE_MAX_ROUNDS = 3). */
-  maxGateRounds?: number;
   /** Passed through to working-context session boundary (§6). */
   sessionIdleThresholdSec?: number;
-  nowSec?: number;
   /** Enabled built-in tools for answer generate (§5.4). */
   tools?: ToolDefinition[];
   toolExecutors?: ReadonlyMap<string, ToolExecutor>;
@@ -69,10 +66,6 @@ export interface RunPipelineResult {
   answer: string;
   /** How many memory-assess rounds ran (1 = sufficient on first try). */
   roundsUsed: number;
-  lastQueryGen: QueryGenResult;
-  lastRetrieved: AssembledRetrievedContext;
-  /** Prior conversation only — current user burst is `message`, not here. */
-  workingContext: WorkingContextTurn[];
   /**
    * Prompt tokens from the answer generate of this turn (when reported).
    * Harness stores this for the next turn's headroom governor.
@@ -97,8 +90,7 @@ export async function runPipeline(
   input: RunPipelineInput,
 ): Promise<RunPipelineResult> {
   const systemPrompt = input.systemPrompt ?? DEFAULT_SYSTEM_PROMPT;
-  const maxRounds = input.maxGateRounds ?? GATE_MAX_ROUNDS;
-  const nowSec = input.nowSec ?? Math.floor(Date.now() / 1000);
+  const nowSec = Math.floor(Date.now() / 1000);
   const log = getLogger("retrieval");
 
   const limits = resolvePackingLimits(input.headroomState);
@@ -121,11 +113,10 @@ export async function runPipeline(
   });
 
   let followUpQueries: string[] = [];
-  let lastQueryGen: QueryGenResult | null = null;
-  let lastRetrieved: AssembledRetrievedContext | null = null;
+  let lastFormattedBlocks = "";
   let roundsUsed = 0;
 
-  for (let round = 1; round <= maxRounds; round++) {
+  for (let round = 1; round <= GATE_MAX_ROUNDS; round++) {
     roundsUsed = round;
 
     const queryGen = await generateSearchQueries(
@@ -134,7 +125,6 @@ export async function runPipeline(
       workingContext,
       followUpQueries,
     );
-    lastQueryGen = queryGen;
 
     const { ranked } = await multiSignalSearch(
       input.db,
@@ -149,11 +139,10 @@ export async function runPipeline(
       queryGen,
       retrievedTopK: limits.retrievedTopK,
       nowSec,
-      widenHistoryFromHint: queryGen.includeHistoryHint,
     });
-    lastRetrieved = retrieved;
+    lastFormattedBlocks = retrieved.formattedBlocks;
 
-    const forceProceed = round === maxRounds;
+    const forceProceed = round === GATE_MAX_ROUNDS;
     const assess = await assessMemorySufficiency(input.chatModel, {
       systemPrompt,
       workingContext,
@@ -181,7 +170,7 @@ export async function runPipeline(
   const answerResult = await generateAnswer(input.chatModel, {
     systemPrompt,
     workingContext,
-    retrievedBlocks: lastRetrieved!.formattedBlocks,
+    retrievedBlocks: lastFormattedBlocks,
     message: input.message,
     mediaParts: input.mediaParts,
     tools: input.tools,
@@ -202,9 +191,6 @@ export async function runPipeline(
   return {
     answer: answerResult.answer,
     roundsUsed,
-    lastQueryGen: lastQueryGen!,
-    lastRetrieved: lastRetrieved!,
-    workingContext,
     packingTightened: limits.tightened,
     ...(answerResult.usage?.promptTokens !== undefined
       ? { promptTokens: answerResult.usage.promptTokens }

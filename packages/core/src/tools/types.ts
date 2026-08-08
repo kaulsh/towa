@@ -28,9 +28,4 @@ export type ToolExecutor = (
   ctx: ToolTurnContext,
 ) => Promise<ToolExecuteResult>;
 
-export interface BoundTool {
-  definition: ToolDefinition;
-  execute: ToolExecutor;
-}
-
 export type { ToolCall, ToolDefinition };

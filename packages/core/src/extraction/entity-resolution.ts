@@ -8,8 +8,9 @@ import type {
 } from "../ai/types.js";
 import { randomUUID } from "node:crypto";
 
-import { blobToEmbedding, cosineSimilarity } from "./embeddings.js";
-import { generateStructured } from "./structured.js";
+import { generateStructured } from "../ai/structured.js";
+
+import { blobToEmbedding, cosineSimilarity } from "../db/embeddings.js";
 import {
   EntityMatchDecisionSchema,
   type ExtractedEntity,
@@ -50,12 +51,10 @@ export async function resolveEntities(
   embeddingModel: LoadedEmbeddingModel,
   entities: ExtractedEntity[],
   episodeId: number,
-  /** Mention ids already confidently mapped to existing nodes in this pass. */
-  priorResolutions: Map<string, string> = new Map(),
 ): Promise<EntityResolutionResult> {
   const resolved: ResolvedEntity[] = [];
   const newNodes: PreparedNodeWrite[] = [];
-  const mentionToNode = new Map<string, string>(priorResolutions);
+  const mentionToNode = new Map<string, string>();
 
   // Resolve sequentially so graph corroboration can use earlier decisions.
   for (const entity of entities) {
@@ -316,7 +315,7 @@ async function verifyMatch(
     },
   ];
 
-  const decision = await generateStructured(
+  const { value: decision } = await generateStructured(
     chatModel,
     messages,
     EntityMatchDecisionSchema,

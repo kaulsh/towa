@@ -1,47 +1,58 @@
-import type {
-  ContextPackingOptions,
-  PackingHeadroomState,
-  ResolvedPackingLimits,
-} from "./types.js";
-import {
-  DEFAULT_HEADROOM_DROP_RATIO,
-  DEFAULT_HEADROOM_RISE_RATIO,
-  DEFAULT_HEADROOM_TIGHTEN_FACTOR,
-  DEFAULT_MIN_RETRIEVED_TOP_K,
-  DEFAULT_MIN_WORKING_TOP_K,
-  DEFAULT_RETRIEVED_TOP_K,
-  DEFAULT_WORKING_TOP_K,
-} from "./types.js";
+/**
+ * Fixed top-K packing + usage-relative headroom governor (§5.2, §6).
+ * Code defaults only — not daemon YAML.
+ */
+
+export interface PackingHeadroomState {
+  /** Most recent answer `usage.promptTokens`. */
+  lastPromptTokens: number;
+  /** Answer promptTokens from the turn before last, when known. */
+  previousPromptTokens?: number;
+  /** Whether the last packing decision used tightened top-K. */
+  tightened: boolean;
+}
+
+export interface ResolvedPackingLimits {
+  workingTopK: number;
+  retrievedTopK: number;
+  /** True when usage-relative pressure triggered (or sticky) tightening. */
+  tightened: boolean;
+  lastPromptTokens?: number;
+  previousPromptTokens?: number;
+  /** `lastPromptTokens / previousPromptTokens` when both available. */
+  usageRelative?: number;
+}
+
+const DEFAULT_WORKING_TOP_K = 24;
+const DEFAULT_RETRIEVED_TOP_K = 6;
+const DEFAULT_HEADROOM_RISE_RATIO = 1.15;
+const DEFAULT_HEADROOM_DROP_RATIO = 0.85;
+const DEFAULT_HEADROOM_TIGHTEN_FACTOR = 0.5;
+const DEFAULT_MIN_WORKING_TOP_K = 4;
+const DEFAULT_MIN_RETRIEVED_TOP_K = 1;
 
 function defaults(
-  workingDefault: number,
-  retrievedDefault: number,
   extras: Partial<ResolvedPackingLimits> = {},
 ): ResolvedPackingLimits {
   return {
-    workingTopK: workingDefault,
-    retrievedTopK: retrievedDefault,
+    workingTopK: DEFAULT_WORKING_TOP_K,
+    retrievedTopK: DEFAULT_RETRIEVED_TOP_K,
     tightened: false,
     ...extras,
   };
 }
 
 function tightenedLimits(
-  workingDefault: number,
-  retrievedDefault: number,
-  tightenFactor: number,
-  minWorking: number,
-  minRetrieved: number,
   extras: Partial<ResolvedPackingLimits> = {},
 ): ResolvedPackingLimits {
   return {
     workingTopK: Math.max(
-      minWorking,
-      Math.floor(workingDefault * tightenFactor),
+      DEFAULT_MIN_WORKING_TOP_K,
+      Math.floor(DEFAULT_WORKING_TOP_K * DEFAULT_HEADROOM_TIGHTEN_FACTOR),
     ),
     retrievedTopK: Math.max(
-      minRetrieved,
-      Math.floor(retrievedDefault * tightenFactor),
+      DEFAULT_MIN_RETRIEVED_TOP_K,
+      Math.floor(DEFAULT_RETRIEVED_TOP_K * DEFAULT_HEADROOM_TIGHTEN_FACTOR),
     ),
     tightened: true,
     ...extras,
@@ -59,26 +70,16 @@ function tightenedLimits(
  */
 export function resolvePackingLimits(
   state: PackingHeadroomState | undefined,
-  options: ContextPackingOptions = {},
 ): ResolvedPackingLimits {
-  const workingDefault = options.workingTopK ?? DEFAULT_WORKING_TOP_K;
-  const retrievedDefault = options.retrievedTopK ?? DEFAULT_RETRIEVED_TOP_K;
-  const riseRatio = options.headroomRiseRatio ?? DEFAULT_HEADROOM_RISE_RATIO;
-  const dropRatio = options.headroomDropRatio ?? DEFAULT_HEADROOM_DROP_RATIO;
-  const tightenFactor =
-    options.headroomTightenFactor ?? DEFAULT_HEADROOM_TIGHTEN_FACTOR;
-  const minWorking = options.minWorkingTopK ?? DEFAULT_MIN_WORKING_TOP_K;
-  const minRetrieved = options.minRetrievedTopK ?? DEFAULT_MIN_RETRIEVED_TOP_K;
-
   if (state === undefined || state.lastPromptTokens <= 0) {
-    return defaults(workingDefault, retrievedDefault);
+    return defaults();
   }
 
   const { lastPromptTokens, previousPromptTokens, tightened: wasTightened } =
     state;
 
   if (previousPromptTokens === undefined || previousPromptTokens <= 0) {
-    return defaults(workingDefault, retrievedDefault, {
+    return defaults({
       lastPromptTokens,
       previousPromptTokens,
     });
@@ -91,24 +92,15 @@ export function resolvePackingLimits(
     usageRelative,
   };
 
-  // Substantial drop → release pressure.
-  if (usageRelative < dropRatio) {
-    return defaults(workingDefault, retrievedDefault, sample);
+  if (usageRelative < DEFAULT_HEADROOM_DROP_RATIO) {
+    return defaults(sample);
   }
 
-  // Meaningful rise, or sticky under pressure while not dropping.
-  if (wasTightened || usageRelative >= riseRatio) {
-    return tightenedLimits(
-      workingDefault,
-      retrievedDefault,
-      tightenFactor,
-      minWorking,
-      minRetrieved,
-      sample,
-    );
+  if (wasTightened || usageRelative >= DEFAULT_HEADROOM_RISE_RATIO) {
+    return tightenedLimits(sample);
   }
 
-  return defaults(workingDefault, retrievedDefault, sample);
+  return defaults(sample);
 }
 
 /**
