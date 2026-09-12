@@ -1,5 +1,7 @@
 import OpenAI from "openai";
 import { zodResponseFormat } from "openai/helpers/zod";
+import { ChatCompletionCreateParamsNonStreaming } from "openai/resources";
+
 import type {
   ChatMessage,
   GenerateInput,
@@ -10,6 +12,8 @@ import type {
   ToolCall,
   ToolDefinition,
 } from "../types.js";
+import type { MessagePart } from "../types.js";
+
 import { transcribeOpenAICompatible } from "./openai-transcribe.js";
 import {
   assertGenerateCapabilities,
@@ -17,8 +21,6 @@ import {
   parseStructuredText,
   zodToJsonSchema,
 } from "./shared.js";
-import type { MessagePart } from "../types.js";
-import { ChatCompletionCreateParamsNonStreaming } from "openai/resources";
 
 export interface OpenAICompatibleConfig {
   /** Model id as understood by the remote endpoint. */
@@ -78,9 +80,7 @@ function toOpenAIContent(content: ChatMessage["content"]): OpenAIChatContent {
   return parts;
 }
 
-function toOpenAITools(
-  tools: ToolDefinition[],
-): OpenAI.Chat.ChatCompletionTool[] {
+function toOpenAITools(tools: ToolDefinition[]): OpenAI.Chat.ChatCompletionTool[] {
   return tools.map((tool) => ({
     type: "function" as const,
     function: {
@@ -91,9 +91,7 @@ function toOpenAITools(
   }));
 }
 
-function toOpenAIMessages(
-  messages: ChatMessage[],
-): OpenAI.Chat.ChatCompletionMessageParam[] {
+function toOpenAIMessages(messages: ChatMessage[]): OpenAI.Chat.ChatCompletionMessageParam[] {
   return messages.map((message) => {
     if (message.role === "tool") {
       return {
@@ -110,10 +108,7 @@ function toOpenAIMessages(
     if (message.role === "system") {
       return {
         role: "system",
-        content:
-          typeof content === "string"
-            ? content
-            : flattenMessageText(message.content),
+        content: typeof content === "string" ? content : flattenMessageText(message.content),
       };
     }
     if (message.role === "assistant") {
@@ -137,10 +132,7 @@ function toOpenAIMessages(
       }
       return {
         role: "assistant",
-        content:
-          typeof content === "string"
-            ? content
-            : flattenMessageText(message.content),
+        content: typeof content === "string" ? content : flattenMessageText(message.content),
       };
     }
     return { role: "user", content };
@@ -158,9 +150,7 @@ function usageFromCompletion(
   if (typeof usage.completion_tokens === "number") {
     out.completionTokens = usage.completion_tokens;
   }
-  return out.promptTokens !== undefined || out.completionTokens !== undefined
-    ? out
-    : undefined;
+  return out.promptTokens !== undefined || out.completionTokens !== undefined ? out : undefined;
 }
 
 function collectAudioParts(

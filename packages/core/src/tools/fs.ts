@@ -12,9 +12,9 @@ import { dirname, isAbsolute, resolve, sep } from "node:path";
 import { z } from "zod";
 
 import type { ToolDefinition } from "../ai/types.js";
-import { getLogger } from "../logging.js";
-
 import type { ToolExecuteResult, ToolTurnContext } from "./types.js";
+
+import { getLogger } from "../logging.js";
 
 const DEFAULT_READ_MAX_BYTES = 256 * 1024;
 const DEFAULT_WRITE_MAX_BYTES = 20 * 1024 * 1024;
@@ -84,25 +84,16 @@ function deny(message: string): ToolExecuteResult {
 }
 
 export const FsListParams = z.object({
-  path: z
-    .string()
-    .min(1)
-    .describe("Directory path (absolute or relative to sandbox)"),
+  path: z.string().min(1).describe("Directory path (absolute or relative to sandbox)"),
 });
 
 export const FsReadParams = z.object({
-  path: z
-    .string()
-    .min(1)
-    .describe("File path (absolute or relative to sandbox)"),
+  path: z.string().min(1).describe("File path (absolute or relative to sandbox)"),
 });
 
 export const FsWriteParams = z
   .object({
-    path: z
-      .string()
-      .min(1)
-      .describe("Destination file path (absolute or relative to sandbox)"),
+    path: z.string().min(1).describe("Destination file path (absolute or relative to sandbox)"),
     // Required + nullable: OpenAI tool schemas reject bare `.optional()`.
     content: z
       .string()
@@ -113,9 +104,7 @@ export const FsWriteParams = z
       .string()
       .nullable()
       .default(null)
-      .describe(
-        'Turn media ref such as "media:0" to copy inbound attachment bytes',
-      ),
+      .describe('Turn media ref such as "media:0" to copy inbound attachment bytes'),
   })
   .refine((v) => (v.content != null) !== (v.source != null), {
     message: "Provide exactly one of content or source",
@@ -218,10 +207,7 @@ export function createFsTools(opts: FsToolOptions): {
     try {
       mkdirSync(dirname(resolved), { recursive: true });
       writeFileSync(resolved, bytes);
-      log.info(
-        { path: resolved, bytes: bytes.length, source: parsed.data.source },
-        "fs_write ok",
-      );
+      log.info({ path: resolved, bytes: bytes.length, source: parsed.data.source }, "fs_write ok");
       return {
         content: JSON.stringify({
           path: resolved,

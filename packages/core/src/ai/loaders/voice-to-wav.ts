@@ -6,10 +6,7 @@ export const VOICE_TRANSCRIBE_MAX_SECONDS = 30;
 /**
  * Encode mono PCM float samples as a 16-bit little-endian WAV buffer.
  */
-export function encodeMonoPcm16Wav(
-  samples: Float32Array,
-  sampleRate: number,
-): Buffer {
+export function encodeMonoPcm16Wav(samples: Float32Array, sampleRate: number): Buffer {
   const dataSize = samples.length * 2;
   const buffer = Buffer.alloc(44 + dataSize);
   buffer.write("RIFF", 0);
@@ -56,11 +53,7 @@ function mixToMono(channelData: Float32Array[]): Float32Array {
 }
 
 /** Linear resample mono float PCM to a target rate. */
-export function resampleMono(
-  input: Float32Array,
-  fromRate: number,
-  toRate: number,
-): Float32Array {
+export function resampleMono(input: Float32Array, fromRate: number, toRate: number): Float32Array {
   if (fromRate === toRate || input.length === 0) {
     return input;
   }
@@ -89,9 +82,7 @@ export async function telegramVoiceToWav16kMono(input: Buffer): Promise<Buffer> 
     const decoded = await decoder.decodeFile(new Uint8Array(input));
     if (decoded.errors?.length) {
       const first = decoded.errors[0]!;
-      throw new Error(
-        `ogg-opus decode error: ${first.message ?? JSON.stringify(first)}`,
-      );
+      throw new Error(`ogg-opus decode error: ${first.message ?? JSON.stringify(first)}`);
     }
     let mono = mixToMono(decoded.channelData);
     const fromRate = decoded.sampleRate || 48000;

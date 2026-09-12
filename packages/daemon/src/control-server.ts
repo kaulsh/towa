@@ -1,22 +1,10 @@
+import { getLogger } from "@towa/core";
 /**
  * Tiny localhost control plane (§13): POST /command + GET /logs.
  * Uses raw node:http — not an application HTTP framework.
  */
-import {
-  createReadStream,
-  existsSync,
-  openSync,
-  readSync,
-  closeSync,
-  statSync,
-} from "node:fs";
-import {
-  createServer,
-  type IncomingMessage,
-  type Server,
-  type ServerResponse,
-} from "node:http";
-import { getLogger } from "@towa/core";
+import { createReadStream, existsSync, openSync, readSync, closeSync, statSync } from "node:fs";
+import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { z } from "zod";
 
 export interface ControlStatusSnapshot {
@@ -56,10 +44,7 @@ const CommandBodySchema = z.object({
 type CommandBody = z.infer<typeof CommandBodySchema>;
 
 /** Validate a parsed JSON value as a control-plane command body. */
-function validatedCommandBody(
-  raw: unknown,
-  res: ServerResponse,
-): CommandBody | undefined {
+function validatedCommandBody(raw: unknown, res: ServerResponse): CommandBody | undefined {
   try {
     return CommandBodySchema.parse(raw);
   } catch (err) {
@@ -69,8 +54,7 @@ function validatedCommandBody(
         code: "bad_request",
         message:
           err instanceof z.ZodError
-            ? err.errors.map((e) => e.message).join("; ") ||
-              "invalid command body"
+            ? err.errors.map((e) => e.message).join("; ") || "invalid command body"
             : "invalid JSON body",
       },
     });
@@ -226,10 +210,7 @@ export async function startControlServer(
     void handleRequest(req, res);
   });
 
-  async function handleRequest(
-    req: IncomingMessage,
-    res: ServerResponse,
-  ): Promise<void> {
+  async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise<void> {
     try {
       if (!checkAuth(req, options.token)) {
         unauthorized(res);
@@ -240,12 +221,7 @@ export async function startControlServer(
       const url = new URL(req.url ?? "/", `http://${host}`);
 
       if (req.method === "GET" && url.pathname === "/logs") {
-        await streamLogs(
-          res,
-          options.logPath,
-          parseLinesQuery(url),
-          parseFollowQuery(url),
-        );
+        await streamLogs(res, options.logPath, parseLinesQuery(url), parseFollowQuery(url));
         return;
       }
 
@@ -324,8 +300,7 @@ export async function startControlServer(
   });
 
   const address = server.address();
-  const port =
-    address && typeof address === "object" ? address.port : options.port;
+  const port = address && typeof address === "object" ? address.port : options.port;
 
   log.info({ host: options.host, port }, "control server listening");
 

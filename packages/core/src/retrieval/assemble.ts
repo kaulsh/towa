@@ -1,19 +1,10 @@
 import type { Kysely } from "kysely";
 
 import type { Database } from "../db/types.js";
-import { resolveTurnsForIdRange } from "../raw-log/index.js";
+import type { HistoryRequest, KgFact, QueryGenResult, RrfScoredEpisode } from "./types.js";
 
-import {
-  getHistory,
-  loadCurrentFactsByEdgeIds,
-  loadCurrentFactsForEntities,
-} from "./temporal.js";
-import type {
-  HistoryRequest,
-  KgFact,
-  QueryGenResult,
-  RrfScoredEpisode,
-} from "./types.js";
+import { resolveTurnsForIdRange } from "../raw-log/index.js";
+import { getHistory, loadCurrentFactsByEdgeIds, loadCurrentFactsForEntities } from "./temporal.js";
 
 export interface AssembleRetrievedContextInput {
   db: Kysely<Database>;
@@ -60,20 +51,13 @@ export async function assembleRetrievedContext(
 
   const edgeIds = [...new Set(input.ranked.flatMap((r) => r.edgeIds))];
 
-  const currentFromEdges = await loadCurrentFactsByEdgeIds(
-    input.db,
-    edgeIds,
-    nowSec,
-  );
+  const currentFromEdges = await loadCurrentFactsByEdgeIds(input.db, edgeIds, nowSec);
   const currentFromEntities = await loadCurrentFactsForEntities(
     input.db,
     input.queryGen.entityNames,
     nowSec,
   );
-  const currentFacts = dedupeFacts([
-    ...currentFromEdges,
-    ...currentFromEntities,
-  ]);
+  const currentFacts = dedupeFacts([...currentFromEdges, ...currentFromEntities]);
 
   const historyRequests: HistoryRequest[] = [...input.queryGen.historyRequests];
   if (input.queryGen.includeHistoryHint && historyRequests.length === 0) {
@@ -94,19 +78,12 @@ export async function assembleRetrievedContext(
   }
 
   const uniqueHistorical = dedupeFacts(historicalFacts);
-  const formattedBlocks = formatRetrievedBlocks(
-    episodes,
-    currentFacts,
-    uniqueHistorical,
-  );
+  const formattedBlocks = formatRetrievedBlocks(episodes, currentFacts, uniqueHistorical);
 
   return { formattedBlocks };
 }
 
-async function loadEpisodeTurns(
-  db: Kysely<Database>,
-  episodeId: number,
-): Promise<EpisodeTurns> {
+async function loadEpisodeTurns(db: Kysely<Database>, episodeId: number): Promise<EpisodeTurns> {
   const episode = await db
     .selectFrom("episodes")
     .select(["id", "start_msg_id", "end_msg_id"])
@@ -117,11 +94,7 @@ async function loadEpisodeTurns(
     return { episodeId, turns: [] };
   }
 
-  const resolved = await resolveTurnsForIdRange(
-    db,
-    episode.start_msg_id,
-    episode.end_msg_id,
-  );
+  const resolved = await resolveTurnsForIdRange(db, episode.start_msg_id, episode.end_msg_id);
 
   return {
     episodeId,
@@ -141,9 +114,7 @@ function formatEpisodeBlock(ep: EpisodeTurns): string {
 
 function formatFactLine(fact: KgFact): string {
   const object = fact.objectName ?? fact.objectLiteral ?? "(unknown)";
-  const window = fact.isCurrent
-    ? "current"
-    : `valid ${fact.validFrom}→${fact.validTo}`;
+  const window = fact.isCurrent ? "current" : `valid ${fact.validFrom}→${fact.validTo}`;
   return `- ${fact.subjectName} —[${fact.relationLabel}]→ ${object} (${window})`;
 }
 
@@ -159,21 +130,16 @@ function formatRetrievedBlocks(
 
   if (episodes.length > 0) {
     parts.push(
-      "## Retrieved episodes (verbatim)\n" +
-        episodes.map(formatEpisodeBlock).join("\n\n"),
+      "## Retrieved episodes (verbatim)\n" + episodes.map(formatEpisodeBlock).join("\n\n"),
     );
   }
 
   if (currentFacts.length > 0) {
-    parts.push(
-      "## Current facts\n" + currentFacts.map(formatFactLine).join("\n"),
-    );
+    parts.push("## Current facts\n" + currentFacts.map(formatFactLine).join("\n"));
   }
 
   if (historicalFacts.length > 0) {
-    parts.push(
-      "## Historical facts\n" + historicalFacts.map(formatFactLine).join("\n"),
-    );
+    parts.push("## Historical facts\n" + historicalFacts.map(formatFactLine).join("\n"));
   }
 
   return parts.join("\n\n");

@@ -1,22 +1,21 @@
-import type { Message } from "telegraf/types";
-import { Telegraf } from "telegraf";
 import type { Kysely } from "kysely";
+import type { Message } from "telegraf/types";
 
-import {
-  appendRawLogMessage,
-  closeEpisode,
-  deriveEpisodeBoundary,
-} from "../raw-log/index.js";
+import { Telegraf } from "telegraf";
+
+import type { Database } from "../db/types.js";
+import type { TelegramConfig } from "./types.js";
+
 import { putMediaBytes } from "../ai/media/index.js";
 import { enqueuePendingExtraction } from "../extraction/queue.js";
 import { getLogger } from "../logging.js";
-import type { Database } from "../db/types.js";
 import {
   durableMediaRef,
   type InboundMessage,
   type MediaRef,
   type SendOutbound,
 } from "../messages.js";
+import { appendRawLogMessage, closeEpisode, deriveEpisodeBoundary } from "../raw-log/index.js";
 import { createTelegramApi } from "./api.js";
 import {
   extractMediaRef,
@@ -24,7 +23,6 @@ import {
   isUnsupportedMessage,
   toInboundMessage,
 } from "./normalize.js";
-import type { TelegramConfig } from "./types.js";
 
 /** Static reply for inbound types we do not process (video, stickers, …). */
 const UNSUPPORTED_REPLY = "I can't process this type of message. Sorry!";
@@ -34,9 +32,7 @@ function base64ToInputFile(data: string): { source: Buffer } {
 }
 
 /** Inbound callback the daemon wires after persistAndNormalize (§7). */
-export type TelegramInboundHandler = (
-  msg: InboundMessage,
-) => void | Promise<void>;
+export type TelegramInboundHandler = (msg: InboundMessage) => void | Promise<void>;
 
 export interface TelegramRuntime {
   /** Outbound send with raw_log + episode close when recording. */
@@ -71,10 +67,7 @@ export interface TelegramRuntime {
  * - Platform message edits are not handled yet (no `edited_message` wiring).
  * - Burst debounce (§6) lives in the harness, not here.
  */
-export function createTelegram(
-  db: Kysely<Database>,
-  config: TelegramConfig,
-): TelegramRuntime {
+export function createTelegram(db: Kysely<Database>, config: TelegramConfig): TelegramRuntime {
   const log = getLogger("telegram");
   const bot = new Telegraf(config.botToken);
 
@@ -88,15 +81,11 @@ export function createTelegram(
   }
 
   /** Private download — fills the process-local cache; not exposed on runtime. */
-  async function downloadMedia(
-    ref: MediaRef,
-  ): Promise<{ data: Buffer; mimeType: string }> {
+  async function downloadMedia(ref: MediaRef): Promise<{ data: Buffer; mimeType: string }> {
     const link = await api.getFileLink(ref.fileId);
     const response = await fetch(link.href);
     if (!response.ok) {
-      throw new Error(
-        `Telegram.downloadMedia: HTTP ${response.status} fetching ${ref.fileId}`,
-      );
+      throw new Error(`Telegram.downloadMedia: HTTP ${response.status} fetching ${ref.fileId}`);
     }
     const data = Buffer.from(await response.arrayBuffer());
     const mimeType = ref.mimeType;
@@ -109,9 +98,7 @@ export function createTelegram(
    * path and seed the media-byte cache for drain. On failure, warn and return
    * the message unchanged (no bytes).
    */
-  async function attachInboundMediaData(
-    inbound: InboundMessage,
-  ): Promise<InboundMessage> {
+  async function attachInboundMediaData(inbound: InboundMessage): Promise<InboundMessage> {
     const media = inbound.media;
     if (!media) {
       return inbound;
@@ -139,9 +126,7 @@ export function createTelegram(
    * Normalize + download media bytes (base64 on media.data) so the harness
    * sees payloads before handleTurn. Failures leave media without data.
    */
-  async function persistAndNormalize(
-    message: Message,
-  ): Promise<InboundMessage | null> {
+  async function persistAndNormalize(message: Message): Promise<InboundMessage | null> {
     const inbound = await attachInboundMediaData(toInboundMessage(message));
 
     await appendRawLogMessage(db, {
@@ -163,10 +148,7 @@ export function createTelegram(
     const boundary = await deriveEpisodeBoundary(db, assistantRawLogId);
 
     if (!boundary) {
-      log.warn(
-        { assistantRawLogId },
-        "could not derive episode boundary after assistant send",
-      );
+      log.warn({ assistantRawLogId }, "could not derive episode boundary after assistant send");
       return;
     }
 
@@ -224,9 +206,7 @@ export function createTelegram(
   return {
     async send(chatId, message) {
       if (!isAllowedChat(chatId)) {
-        throw new Error(
-          `Telegram.send: chatId ${chatId} is not the allow-listed chat`,
-        );
+        throw new Error(`Telegram.send: chatId ${chatId} is not the allow-listed chat`);
       }
 
       let sent: Message;
@@ -238,18 +218,14 @@ export function createTelegram(
           sent = await api.sendPhoto({
             chatId,
             data: base64ToInputFile(message.data),
-            ...(message.caption !== undefined
-              ? { caption: message.caption }
-              : {}),
+            ...(message.caption !== undefined ? { caption: message.caption } : {}),
           });
           break;
         case "video":
           sent = await api.sendVideo({
             chatId,
             data: base64ToInputFile(message.data),
-            ...(message.caption !== undefined
-              ? { caption: message.caption }
-              : {}),
+            ...(message.caption !== undefined ? { caption: message.caption } : {}),
           });
           break;
         case "audio":
@@ -257,9 +233,7 @@ export function createTelegram(
           sent = await api.sendVoice({
             chatId,
             data: base64ToInputFile(message.data),
-            ...(message.caption !== undefined
-              ? { caption: message.caption }
-              : {}),
+            ...(message.caption !== undefined ? { caption: message.caption } : {}),
           });
           break;
         default: {
@@ -270,40 +244,27 @@ export function createTelegram(
         }
       }
 
-      const recordInRawLog =
-        message.type !== "text" || message.recordInRawLog !== false;
+      const recordInRawLog = message.type !== "text" || message.recordInRawLog !== false;
       if (!recordInRawLog) {
         return String(sent.message_id);
       }
 
-      const content =
-        message.type === "text" ? message.text : (message.caption ?? "");
+      const content = message.type === "text" ? message.text : (message.caption ?? "");
 
       // Video is omitted from extractMediaRef (unsupported inbound); build
       // the outbound ref from the Bot API reply after sendVideo.
       let outboundMedia = extractMediaRef(sent);
-      if (
-        !outboundMedia &&
-        message.type === "video" &&
-        "video" in sent &&
-        sent.video
-      ) {
+      if (!outboundMedia && message.type === "video" && "video" in sent && sent.video) {
         outboundMedia = {
           fileId: sent.video.file_id,
           mimeType: sent.video.mime_type ?? message.mimeType ?? "video/mp4",
           kind: "video",
-          ...(sent.video.file_name !== undefined
-            ? { fileName: sent.video.file_name }
-            : {}),
+          ...(sent.video.file_name !== undefined ? { fileName: sent.video.file_name } : {}),
         };
       }
 
       // Seed cache from bytes we already hold so drain can enrich assistant media.
-      if (
-        outboundMedia &&
-        message.type !== "text" &&
-        typeof message.data === "string"
-      ) {
+      if (outboundMedia && message.type !== "text" && typeof message.data === "string") {
         putMediaBytes(
           outboundMedia.fileId,
           Buffer.from(message.data, "base64"),
@@ -339,15 +300,9 @@ export function createTelegram(
 
         if (config.webhook) {
           const { domain, port, path } = config.webhook;
-          log.info(
-            { mode: "webhook", domain, port, path },
-            "starting Telegram bot",
-          );
+          log.info({ mode: "webhook", domain, port, path }, "starting Telegram bot");
           await bot.launch({ webhook: config.webhook }, () =>
-            log.info(
-              { mode: "webhook" },
-              "Telegram bot started — receiving updates",
-            ),
+            log.info({ mode: "webhook" }, "Telegram bot started — receiving updates"),
           );
           return;
         }
@@ -360,10 +315,7 @@ export function createTelegram(
         await api.deleteWebhook({});
 
         await bot.launch({}, () =>
-          log.info(
-            { mode: "polling" },
-            "Telegram bot started — receiving updates",
-          ),
+          log.info({ mode: "polling" }, "Telegram bot started — receiving updates"),
         );
       } catch (err) {
         log.error({ err }, "Telegram bot stopped with error");

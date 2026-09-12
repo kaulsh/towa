@@ -9,8 +9,8 @@
  * multistream destinations.
  */
 import { createWriteStream, existsSync, renameSync, statSync } from "node:fs";
-import { dirname } from "node:path";
 import { mkdirSync } from "node:fs";
+import { dirname } from "node:path";
 import { Writable } from "node:stream";
 import pino, { type Logger, multistream, type DestinationStream } from "pino";
 
@@ -32,10 +32,7 @@ let configuredFilePath: string | null = null;
  * Size-capped file destination: when writes would push past `maxBytes`,
  * rename `file` → `file.1` (overwrite) and open a fresh primary file.
  */
-function createRotatingFileDestination(
-  filePath: string,
-  maxBytes: number,
-): DestinationStream {
+function createRotatingFileDestination(filePath: string, maxBytes: number): DestinationStream {
   mkdirSync(dirname(filePath), { recursive: true });
 
   let stream = createWriteStream(filePath, { flags: "a" });

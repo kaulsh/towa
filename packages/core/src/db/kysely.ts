@@ -2,8 +2,9 @@ import DatabaseConstructor from "better-sqlite3";
 import { Kysely, SqliteDialect } from "kysely";
 import * as sqliteVec from "sqlite-vec";
 
-import { migrate } from "./migrate.js";
 import type { Database } from "./types.js";
+
+import { migrate } from "./migrate.js";
 
 export type { Database } from "./types.js";
 export { VALID_TO_OPEN_SENTINEL } from "./constants.js";
@@ -21,9 +22,7 @@ export interface OpenDatabaseOptions {
  * then run ordered migrations. This is the single entry point every track uses
  * to obtain a typed Kysely instance.
  */
-export async function Sqlite(
-  options: OpenDatabaseOptions,
-): Promise<Kysely<Database>> {
+export async function Sqlite(options: OpenDatabaseOptions): Promise<Kysely<Database>> {
   const sqlite = new DatabaseConstructor(options.path);
 
   // Concurrency: readers never block writers (WAL); contention waits briefly.

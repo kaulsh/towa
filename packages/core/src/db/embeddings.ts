@@ -5,13 +5,8 @@ export function embeddingToBlob(embedding: number[]): Buffer {
 }
 
 export function blobToEmbedding(blob: Buffer): number[] {
-  const aligned =
-    blob.byteOffset % 4 === 0
-      ? blob
-      : Buffer.from(blob);
-  return Array.from(
-    new Float32Array(aligned.buffer, aligned.byteOffset, aligned.byteLength / 4),
-  );
+  const aligned = blob.byteOffset % 4 === 0 ? blob : Buffer.from(blob);
+  return Array.from(new Float32Array(aligned.buffer, aligned.byteOffset, aligned.byteLength / 4));
 }
 
 export function cosineSimilarity(a: number[], b: number[]): number {

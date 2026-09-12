@@ -70,13 +70,13 @@ pnpm cli -- ping
 
 ## Secrets (env only)
 
-| Variable | Required | Notes |
-|---|---|---|
-| `TELEGRAM_BOT_TOKEN` | yes | Bot API token |
-| `OPENAI_API_KEY` | if openai-compatible needs a key | Chat and/or embeddings |
-| `TELEGRAM_WEBHOOK_SECRET` | if using webhook secret | Maps to Telegraf `secretToken` |
-| `TOWA_CONTROL_TOKEN` | no | Bearer token for CLI ↔ control HTTP (or `control.token` in YAML) |
-| `TOWA_CONTROL_PORT` | no | Control HTTP port (default `18741`); same value the daemon uses if YAML omits `control.port` |
-| `TOWA_CONFIG_FILE` | for `pnpm daemon` / `start` / `dev` | Path passed to the same bootstrap as `towa run` |
+| Variable                  | Required                            | Notes                                                                                        |
+| ------------------------- | ----------------------------------- | -------------------------------------------------------------------------------------------- |
+| `TELEGRAM_BOT_TOKEN`      | yes                                 | Bot API token                                                                                |
+| `OPENAI_API_KEY`          | if openai-compatible needs a key    | Chat and/or embeddings                                                                       |
+| `TELEGRAM_WEBHOOK_SECRET` | if using webhook secret             | Maps to Telegraf `secretToken`                                                               |
+| `TOWA_CONTROL_TOKEN`      | no                                  | Bearer token for CLI ↔ control HTTP (or `control.token` in YAML)                             |
+| `TOWA_CONTROL_PORT`       | no                                  | Control HTTP port (default `18741`); same value the daemon uses if YAML omits `control.port` |
+| `TOWA_CONFIG_FILE`        | for `pnpm daemon` / `start` / `dev` | Path passed to the same bootstrap as `towa run`                                              |
 
 Everything else (chat id, model ids, debounce, logging path, optional `control.port`, …) lives in the YAML file — see `towa.example.yaml`.

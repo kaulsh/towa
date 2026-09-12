@@ -5,18 +5,20 @@
 This project keeps two documents deliberately separate. Route changes to the correct one rather than letting either grow to cover both jobs.
 
 **Update `docs/towa-design.md` when:**
+
 - You're making or revisiting an architectural decision — anything with real tradeoffs that were reasoned through (why SQLite over Postgres, why async extraction, why bitemporal edges, etc.).
 - You're adding, removing, or reshaping a subsystem.
-- You're revisiting something in its §11 (Explicitly Deferred / Rejected) with new evidence — e.g., an eval result that justifies building hierarchical rollups after all. Update the doc's reasoning *first*, then build — don't let the rejected list silently go stale.
+- You're revisiting something in its §11 (Explicitly Deferred / Rejected) with new evidence — e.g., an eval result that justifies building hierarchical rollups after all. Update the doc's reasoning _first_, then build — don't let the rejected list silently go stale.
 - You're changing data-model or schema **semantics** (not just column names) — e.g., if bitemporal edge behavior changes.
 
 **Update this file (`CLAUDE.md`) when:**
+
 - You're adding, changing, or removing a build/lint/test/dev command.
 - You're introducing a code convention or dependency choice that affects how new code should look going forward (e.g., "structured LLM output is now validated with `zod`").
 - You've hit a new anti-pattern in practice worth calling out explicitly so it isn't repeated.
 - You're clarifying an existing invariant's phrasing, not its meaning.
 
-**Rule of thumb:** if the change alters *why* the system is shaped the way it is, it belongs in the design doc. If it only changes *how code gets written* on a design that's already settled, it belongs here. This file should stay short and cheap to load every session — if a rule needs paragraphs of justification, put the justification in the design doc and leave just the one-line rule plus a `§` cross-reference here.
+**Rule of thumb:** if the change alters _why_ the system is shaped the way it is, it belongs in the design doc. If it only changes _how code gets written_ on a design that's already settled, it belongs here. This file should stay short and cheap to load every session — if a rule needs paragraphs of justification, put the justification in the design doc and leave just the one-line rule plus a `§` cross-reference here.
 
 ---
 
@@ -37,7 +39,7 @@ These are correctness/thesis-preserving rules. Do not "helpfully" optimize aroun
 - **Agent tools are built-in + config-gated only.** Fixed tool set (`web_search`, `web_fetch`, `fs_*`); enable via daemon YAML. No user-defined tools / plugin registry. (§5.4)
 - **Every episode gets a gist + embedding unconditionally** — never gated on whether extraction judged the episode "important." This is what makes the sliding context window safe to drop turns from. (§2.4, §6)
 - **KG writes are durable personal facts only** — fact-level salience (identity, preferences, people/places, plans, lasting attributes); never gate the gist on importance. (§2.3, §2.4, §4)
-- **Entity resolution is biased toward *not* merging on ambiguity.** Create a new node over a speculative merge; false splits are fixable later via `merge_entities`, false merges corrupt the graph. (§4.3)
+- **Entity resolution is biased toward _not_ merging on ambiguity.** Create a new node over a speculative merge; false splits are fixable later via `merge_entities`, false merges corrupt the graph. (§4.3)
 - **Media binaries are best-effort/ephemeral; transcripts and captions are the durable memory.** Never assume a `MediaRef` is fetchable indefinitely. (§7.3)
 - **Media identity is real columns, not JSON.** Persist `chat_id` / `message_id` / `media_*` / `is_media_artifact` on `raw_log`. Do not reintroduce `source_meta` or scrape opaque Telegram payloads in KG/enrichment — Telegram→`MediaRef` mapping stays typed under `src/telegram/`. (§2.1, §7.3)
 - **Model interfaces stay segregated:** `LoadedChatModel` and `LoadedEmbeddingModel` are separate types. Don't reintroduce an optional `embed()` on a chat model or vice versa. (§8.1)
@@ -79,7 +81,7 @@ Pulled from the design doc's §11 (Explicitly Deferred / Rejected) — these wer
 - **No ReasoningBank-style procedural memory store.** If a future retrieval-strategy-learning layer is proposed, it must be explicitly gated behind eval evidence per §11 — it is not a general memory mechanism and should never replace the raw log / KG / gist planes.
 - **No dedicated `loadOllama` / `loadLlamaCpp`.** Chat is openai-compatible only with an explicit `base_url`. Do not reintroduce a second HTTP client, in-process GGUF runtime, or an implicit Ollama default (§8.2, §11).
 - **No pre-call `countTokens()` packing.** Fixed top-K + next-turn usage-relative headroom from answer response usage only — no absolute context-window registry or `capabilities.contextWindow` (§5.2, §6, §8.3, §11).
-- **No new dependency for something §13 already covers.** Check the frameworks table before adding an ORM, HTTP *framework* (control plane uses raw `node:http` only), CLI framework, audio-transcription library, or alternative logger.
+- **No new dependency for something §13 already covers.** Check the frameworks table before adding an ORM, HTTP _framework_ (control plane uses raw `node:http` only), CLI framework, audio-transcription library, or alternative logger.
 
 ---
 

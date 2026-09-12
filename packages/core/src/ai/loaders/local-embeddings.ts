@@ -1,10 +1,8 @@
-import {
-  pipeline,
-  type FeatureExtractionPipeline,
-  type Tensor,
-} from "@huggingface/transformers";
-import { getLogger } from "../../logging.js";
+import { pipeline, type FeatureExtractionPipeline, type Tensor } from "@huggingface/transformers";
+
 import type { LoadedEmbeddingModel } from "../types.js";
+
+import { getLogger } from "../../logging.js";
 
 export interface LocalEmbeddingsConfig {
   /**

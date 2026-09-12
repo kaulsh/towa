@@ -1,7 +1,7 @@
 import type { Kysely } from "kysely";
 
-import type { MediaKind, MediaRef } from "../messages.js";
 import type { Database, RawLogRole, SqliteBoolean } from "../db/types.js";
+import type { MediaKind, MediaRef } from "../messages.js";
 
 /** Build a durable MediaRef from raw_log media columns (no `data`). */
 export function mediaRefFromColumns(
@@ -210,10 +210,7 @@ export async function resolveRecentTurns(
   return newestFirst.reverse();
 }
 
-function resolveOne(
-  original: RawRow,
-  edits: readonly RawRow[],
-): ResolvedTurn | null {
+function resolveOne(original: RawRow, edits: readonly RawRow[]): ResolvedTurn | null {
   if (original.deleted_marker === 1) {
     return null;
   }

@@ -1,17 +1,15 @@
 import type { Kysely } from "kysely";
 
-import type { Database } from "../db/types.js";
-import {
-  assessMemorySufficiency,
-  generateAnswer,
-  generateSearchQueries,
-} from "../ai/index.js";
 import type {
   LoadedChatModel,
   LoadedEmbeddingModel,
   MessagePart,
   ToolDefinition,
 } from "../ai/types.js";
+import type { Database } from "../db/types.js";
+import type { ToolExecutor, TurnMediaRef } from "../tools/types.js";
+
+import { assessMemorySufficiency, generateAnswer, generateSearchQueries } from "../ai/index.js";
 import {
   buildWorkingContext,
   excludeTrailingUserTurns,
@@ -20,8 +18,6 @@ import {
   type WorkingContextTurn,
 } from "../context-assembly/index.js";
 import { getLogger } from "../logging.js";
-import type { ToolExecutor, TurnMediaRef } from "../tools/types.js";
-
 import { assembleRetrievedContext } from "../retrieval/assemble.js";
 import { multiSignalSearch } from "../retrieval/search.js";
 
@@ -86,9 +82,7 @@ const DEFAULT_SYSTEM_PROMPT =
  * On insufficient, loops with follow_up_queries, hard-capped at K rounds.
  * Then generateAnswer (plain text, optional tools) once.
  */
-export async function runPipeline(
-  input: RunPipelineInput,
-): Promise<RunPipelineResult> {
+export async function runPipeline(input: RunPipelineInput): Promise<RunPipelineResult> {
   const systemPrompt = input.systemPrompt ?? DEFAULT_SYSTEM_PROMPT;
   const nowSec = Math.floor(Date.now() / 1000);
   const log = getLogger("retrieval");
@@ -126,12 +120,9 @@ export async function runPipeline(
       followUpQueries,
     );
 
-    const { ranked } = await multiSignalSearch(
-      input.db,
-      input.embeddingModel,
-      queryGen,
-      { nowSec },
-    );
+    const { ranked } = await multiSignalSearch(input.db, input.embeddingModel, queryGen, {
+      nowSec,
+    });
 
     const retrieved = await assembleRetrievedContext({
       db: input.db,

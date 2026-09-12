@@ -1,15 +1,11 @@
 import type { Kysely } from "kysely";
 
-import type { Database } from "../db/types.js";
-import type {
-  ChatMessage,
-  LoadedChatModel,
-  LoadedEmbeddingModel,
-} from "../ai/types.js";
 import { randomUUID } from "node:crypto";
 
-import { generateStructured } from "../ai/structured.js";
+import type { ChatMessage, LoadedChatModel, LoadedEmbeddingModel } from "../ai/types.js";
+import type { Database } from "../db/types.js";
 
+import { generateStructured } from "../ai/structured.js";
 import { blobToEmbedding, cosineSimilarity } from "../db/embeddings.js";
 import {
   EntityMatchDecisionSchema,
@@ -145,14 +141,7 @@ async function generateCandidates(
 ): Promise<CandidateNode[]> {
   const rows = await db
     .selectFrom("kg_nodes")
-    .select([
-      "id",
-      "type_label",
-      "canonical_name",
-      "aliases",
-      "attributes",
-      "embedding",
-    ])
+    .select(["id", "type_label", "canonical_name", "aliases", "attributes", "embedding"])
     .execute();
 
   if (rows.length === 0) {
@@ -193,17 +182,13 @@ async function generateCandidates(
   }
 
   // Keep top fuzzy hits even if we also score embeddings.
-  const fuzzyTop = [...byId.values()]
-    .sort((a, b) => b.score - a.score)
-    .slice(0, FUZZY_NAME_LIMIT);
+  const fuzzyTop = [...byId.values()].sort((a, b) => b.score - a.score).slice(0, FUZZY_NAME_LIMIT);
   for (const c of fuzzyTop) {
     byId.set(c.id, c);
   }
 
   // Embedding nearest-neighbor stage.
-  const [queryEmbedding] = await embeddingModel.embed([
-    buildNodeEmbeddingText(entity),
-  ]);
+  const [queryEmbedding] = await embeddingModel.embed([buildNodeEmbeddingText(entity)]);
   if (queryEmbedding && queryEmbedding.length > 0) {
     const scored: CandidateNode[] = [];
     for (const row of rows) {
@@ -327,8 +312,7 @@ async function verifyMatch(
 
 function buildNodeEmbeddingText(entity: ExtractedEntity): string {
   const attrKeys = Object.keys(entity.attributes);
-  const attrSnippet =
-    attrKeys.length > 0 ? ` ${JSON.stringify(entity.attributes)}` : "";
+  const attrSnippet = attrKeys.length > 0 ? ` ${JSON.stringify(entity.attributes)}` : "";
   return `${entity.type_label}: ${entity.canonical_name}${attrSnippet}`;
 }
 

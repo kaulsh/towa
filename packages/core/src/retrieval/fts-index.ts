@@ -1,8 +1,8 @@
 import type { Kysely } from "kysely";
+
 import { sql } from "kysely";
 
 import type { Database } from "../db/types.js";
-
 import type { FtsSourceType } from "./types.js";
 
 /**

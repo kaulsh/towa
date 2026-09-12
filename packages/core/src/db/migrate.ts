@@ -1,10 +1,11 @@
 import type { Kysely } from "kysely";
 
+import type { Database } from "./types.js";
+
 import { up as up001 } from "./migrations/001_initial.js";
 import { up as up002 } from "./migrations/002_init_interview.js";
 import { up as up003 } from "./migrations/003_raw_log_media_columns.js";
 import { up as up004 } from "./migrations/004_raw_log_media_file_name.js";
-import type { Database } from "./types.js";
 
 export interface Migration {
   version: number;

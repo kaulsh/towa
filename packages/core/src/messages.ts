@@ -30,12 +30,7 @@ export function durableMediaRef(ref: MediaRef): Omit<MediaRef, "data"> {
 }
 
 export function isMediaKind(value: string): value is MediaKind {
-  return (
-    value === "image" ||
-    value === "audio" ||
-    value === "video" ||
-    value === "file"
-  );
+  return value === "image" || value === "audio" || value === "video" || value === "file";
 }
 
 /** Parent message reference for inbound replies (platform-agnostic). */
@@ -93,7 +88,4 @@ export interface DeleteEvent {
 }
 
 /** Outbound send port (Telegram `send`; not injected into the harness). */
-export type SendOutbound = (
-  chatId: string,
-  message: OutboundMessage,
-) => Promise<string>;
+export type SendOutbound = (chatId: string, message: OutboundMessage) => Promise<string>;

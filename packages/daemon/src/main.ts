@@ -6,7 +6,6 @@
  */
 
 import "dotenv/config";
-
 import {
   configureLogging,
   createHarness,
@@ -17,13 +16,9 @@ import {
   Sqlite,
 } from "@towa/core";
 
-import {
-  loadConfigFromFile,
-  loadModels,
-  buildToolsFromConfig,
-} from "./config.js";
-import { CONTROL_HOST } from "./control.js";
+import { loadConfigFromFile, loadModels, buildToolsFromConfig } from "./config.js";
 import { startControlServer } from "./control-server.js";
+import { CONTROL_HOST } from "./control.js";
 import { startExtractionDrainLoop } from "./drain-loop.js";
 
 export async function runDaemon(configFilePath: string): Promise<void> {
@@ -36,10 +31,7 @@ export async function runDaemon(configFilePath: string): Promise<void> {
   });
 
   const log = getLogger("daemon-main");
-  log.info(
-    { configFile: cfg.configFilePath, dbPath: cfg.dbPath },
-    "bootstrap starting",
-  );
+  log.info({ configFile: cfg.configFilePath, dbPath: cfg.dbPath }, "bootstrap starting");
 
   const { chatModel, embeddingModel } = await loadModels(cfg);
 
@@ -52,7 +44,7 @@ export async function runDaemon(configFilePath: string): Promise<void> {
   });
 
   const { tools, toolExecutors } = buildToolsFromConfig(cfg);
-  
+
   if (tools.length > 0) {
     log.info({ tools: tools.map((t) => t.name) }, "built-in tools enabled");
   }
@@ -143,10 +135,7 @@ export async function runDaemon(configFilePath: string): Promise<void> {
 }
 
 // Allow `node dist/main.js` when TOWA_CONFIG_FILE is set (dev scripts).
-if (
-  process.argv[1]?.endsWith("main.js") ||
-  process.argv[1]?.endsWith("main.ts")
-) {
+if (process.argv[1]?.endsWith("main.js") || process.argv[1]?.endsWith("main.ts")) {
   const configPath = process.env.TOWA_CONFIG_FILE?.trim();
   if (configPath) {
     runDaemon(configPath).catch((err) => {

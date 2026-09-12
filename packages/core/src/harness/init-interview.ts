@@ -1,8 +1,10 @@
 import type { Kysely } from "kysely";
+
 import { z } from "zod";
 
-import type { Database } from "../db/types.js";
 import type { ChatMessage, LoadedChatModel } from "../ai/types.js";
+import type { Database } from "../db/types.js";
+
 import { generateStructured } from "../ai/structured.js";
 import { getLogger } from "../logging.js";
 
@@ -46,7 +48,8 @@ const FACT_GOALS = [
   },
   {
     id: "health_or_routines",
-    description: "Standing health notes or daily routines they want remembered (only if volunteered)",
+    description:
+      "Standing health notes or daily routines they want remembered (only if volunteered)",
   },
   {
     id: "want_remembered",
@@ -144,9 +147,7 @@ function parseGoalIds(json: string): FactGoalId[] {
   try {
     const parsed: unknown = JSON.parse(json);
     if (!Array.isArray(parsed)) return [];
-    return parsed.filter(
-      (id): id is FactGoalId => typeof id === "string" && isFactGoalId(id),
-    );
+    return parsed.filter((id): id is FactGoalId => typeof id === "string" && isFactGoalId(id));
   } catch {
     return [];
   }
@@ -220,10 +221,7 @@ export async function saveInitInterviewState(
 }
 
 /** Soft context: a few existing node names, if any — never required. */
-async function loadKgNameHints(
-  db: Kysely<Database>,
-  limit = 24,
-): Promise<string[]> {
+async function loadKgNameHints(db: Kysely<Database>, limit = 24): Promise<string[]> {
   const rows = await db
     .selectFrom("kg_nodes")
     .select("canonical_name")
@@ -243,14 +241,10 @@ function buildInterviewerSystemPrompt(input: {
   const pendingBlock =
     input.pendingGoals.length === 0
       ? "(none left)"
-      : input.pendingGoals
-          .map((id) => `- ${id}: ${descriptionForGoal(id)}`)
-          .join("\n");
+      : input.pendingGoals.map((id) => `- ${id}: ${descriptionForGoal(id)}`).join("\n");
 
   const resolvedBlock =
-    input.resolvedGoals.length === 0
-      ? "(none yet)"
-      : input.resolvedGoals.join(", ");
+    input.resolvedGoals.length === 0 ? "(none yet)" : input.resolvedGoals.join(", ");
 
   const hintsBlock =
     input.kgHints.length === 0
@@ -344,18 +338,11 @@ async function runInterviewer(input: {
     { role: "user", content: input.userContent },
   ];
 
-  const { value } = await generateStructured(
-    input.chatModel,
-    messages,
-    InterviewerOutputSchema,
-  );
+  const { value } = await generateStructured(input.chatModel, messages, InterviewerOutputSchema);
   return value;
 }
 
-export async function cancelInitInterview(
-  db: Kysely<Database>,
-  chatId: string,
-): Promise<void> {
+export async function cancelInitInterview(db: Kysely<Database>, chatId: string): Promise<void> {
   const state = await loadInitInterviewState(db, chatId);
   state.status = "idle";
   // Keep resolvedGoals; stop asking. Pending recomputed for a future /init.
@@ -398,15 +385,10 @@ export async function startOrResumeInitInterview(input: {
     kgHints,
     mode: "start",
     turnCount: state.turnCount,
-    userContent:
-      "[Interview start/resume — ask one useful opening question about a pending goal.]",
+    userContent: "[Interview start/resume — ask one useful opening question about a pending goal.]",
   });
 
-  const resolved = mergeResolved(
-    state.resolvedGoals,
-    out.resolved_goal_ids,
-    state.pendingGoals,
-  );
+  const resolved = mergeResolved(state.resolvedGoals, out.resolved_goal_ids, state.pendingGoals);
   state.resolvedGoals = resolved;
   state.pendingGoals = pendingFromResolved(resolved);
 
@@ -416,9 +398,7 @@ export async function startOrResumeInitInterview(input: {
 
   await saveInitInterviewState(db, state);
   const reply =
-    state.status === "completed"
-      ? COMPLETED_REPLY
-      : composeInterviewReply(out, state.pendingGoals);
+    state.status === "completed" ? COMPLETED_REPLY : composeInterviewReply(out, state.pendingGoals);
   log.info(
     {
       chatId,
@@ -458,10 +438,7 @@ export async function continueInitInterview(input: {
   if (state.turnCount > INIT_INTERVIEW_HARD_CAP_TURNS) {
     state.status = "completed";
     await saveInitInterviewState(db, state);
-    log.info(
-      { chatId, turnCount: state.turnCount },
-      "init interview hard-capped",
-    );
+    log.info({ chatId, turnCount: state.turnCount }, "init interview hard-capped");
     return HARD_CAP_REPLY;
   }
 
@@ -506,9 +483,7 @@ export async function continueInitInterview(input: {
       newlyResolved: out.resolved_goal_ids,
       hitHardCap,
       usedFallbackQuestion:
-        !out.done &&
-        state.pendingGoals.length > 0 &&
-        !(out.question?.includes("?") ?? false),
+        !out.done && state.pendingGoals.length > 0 && !(out.question?.includes("?") ?? false),
       replyPreview: reply.slice(0, 120),
     },
     "init interview turn",

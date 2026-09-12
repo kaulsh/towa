@@ -23,9 +23,6 @@ export interface ToolExecuteResult {
   isError?: boolean;
 }
 
-export type ToolExecutor = (
-  args: unknown,
-  ctx: ToolTurnContext,
-) => Promise<ToolExecuteResult>;
+export type ToolExecutor = (args: unknown, ctx: ToolTurnContext) => Promise<ToolExecuteResult>;
 
 export type { ToolCall, ToolDefinition };

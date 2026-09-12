@@ -1,19 +1,15 @@
 import type { Kysely } from "kysely";
+
 import { sql } from "kysely";
 
 import type { Database } from "../db/types.js";
-
 import type { HistoryRequest, KgFact } from "./types.js";
 
 /**
  * Default temporal filter: currently-valid edges only (§5.3 / §2.3).
  * `valid_to` never uses NULL — open edges use VALID_TO_OPEN_SENTINEL.
  */
-export function isCurrentlyValid(
-  validFrom: number,
-  validTo: number,
-  nowSec: number,
-): boolean {
+export function isCurrentlyValid(validFrom: number, validTo: number, nowSec: number): boolean {
   return validFrom <= nowSec && nowSec < validTo;
 }
 
@@ -62,11 +58,7 @@ export async function getHistory(
         SELECT 1 FROM json_each(sn.aliases) AS a WHERE a.value = ${entity}
       )
     )
-    ${
-      request.relation
-        ? sql`AND e.relation_label = ${request.relation}`
-        : sql``
-    }
+    ${request.relation ? sql`AND e.relation_label = ${request.relation}` : sql``}
     ORDER BY e.valid_from ASC, e.ingested_at ASC
   `.execute(db);
 

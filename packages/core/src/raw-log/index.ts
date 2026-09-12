@@ -1,11 +1,9 @@
 import type { Kysely } from "kysely";
 
-import type { MediaKind } from "../messages.js";
 import type { Database, RawLogRole, SqliteBoolean } from "../db/types.js";
-import {
-  deleteFtsBySource,
-  indexRawLogForFts,
-} from "../retrieval/fts-index.js";
+import type { MediaKind } from "../messages.js";
+
+import { deleteFtsBySource, indexRawLogForFts } from "../retrieval/fts-index.js";
 
 export {
   mediaRefFromColumns,
@@ -138,16 +136,12 @@ export async function appendRawLogEdit(
 
   const media =
     input.media ??
-    (original.media_file_id &&
-    original.media_mime_type &&
-    original.media_kind
+    (original.media_file_id && original.media_mime_type && original.media_kind
       ? {
           fileId: original.media_file_id,
           mimeType: original.media_mime_type,
           kind: original.media_kind,
-          ...(original.media_file_name
-            ? { fileName: original.media_file_name }
-            : {}),
+          ...(original.media_file_name ? { fileName: original.media_file_name } : {}),
         }
       : null);
 
@@ -197,22 +191,16 @@ export async function appendRawLogDelete(
     .executeTakeFirst();
 
   if (!original) {
-    throw new Error(
-      `appendRawLogDelete: original raw_log id ${input.originalId} not found`,
-    );
+    throw new Error(`appendRawLogDelete: original raw_log id ${input.originalId} not found`);
   }
 
   const media =
-    original.media_file_id &&
-    original.media_mime_type &&
-    original.media_kind
+    original.media_file_id && original.media_mime_type && original.media_kind
       ? {
           fileId: original.media_file_id,
           mimeType: original.media_mime_type,
           kind: original.media_kind,
-          ...(original.media_file_name
-            ? { fileName: original.media_file_name }
-            : {}),
+          ...(original.media_file_name ? { fileName: original.media_file_name } : {}),
         }
       : null;
 

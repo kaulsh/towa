@@ -30,9 +30,7 @@ export type SendMediaParams = {
 
 export interface TelegramApi {
   getMe(): Promise<Awaited<ReturnType<Telegram["getMe"]>>>;
-  deleteWebhook(
-    extra?: Parameters<Telegram["deleteWebhook"]>[0],
-  ): Promise<true>;
+  deleteWebhook(extra?: Parameters<Telegram["deleteWebhook"]>[0]): Promise<true>;
   sendMessage(params: SendMessageParams): Promise<Message.TextMessage>;
   sendPhoto(params: SendMediaParams): Promise<Message.PhotoMessage>;
   sendVideo(params: SendMediaParams): Promise<Message.VideoMessage>;
@@ -40,10 +38,7 @@ export interface TelegramApi {
   getFileLink(fileId: string): Promise<URL>;
 }
 
-export type CreateTelegramApiOptions = Omit<
-  TransientRetryOptions,
-  "label" | "shouldRetry"
->;
+export type CreateTelegramApiOptions = Omit<TransientRetryOptions, "label" | "shouldRetry">;
 
 function retrying<T>(
   label: string,
@@ -74,9 +69,7 @@ export function createTelegramApi(
           telegram.sendMessage(chatId, markdownToTelegramHtml(text), {
             parse_mode: "HTML",
             reply_parameters:
-              replyToMessageId !== undefined
-                ? { message_id: replyToMessageId }
-                : undefined,
+              replyToMessageId !== undefined ? { message_id: replyToMessageId } : undefined,
           }),
         options,
       ),
@@ -84,40 +77,24 @@ export function createTelegramApi(
     sendPhoto: ({ chatId, data, caption }) =>
       retrying(
         "sendPhoto",
-        () =>
-          telegram.sendPhoto(
-            chatId,
-            data,
-            caption !== undefined ? { caption } : undefined,
-          ),
+        () => telegram.sendPhoto(chatId, data, caption !== undefined ? { caption } : undefined),
         options,
       ),
 
     sendVideo: ({ chatId, data, caption }) =>
       retrying(
         "sendVideo",
-        () =>
-          telegram.sendVideo(
-            chatId,
-            data,
-            caption !== undefined ? { caption } : undefined,
-          ),
+        () => telegram.sendVideo(chatId, data, caption !== undefined ? { caption } : undefined),
         options,
       ),
 
     sendVoice: ({ chatId, data, caption }) =>
       retrying(
         "sendVoice",
-        () =>
-          telegram.sendVoice(
-            chatId,
-            data,
-            caption !== undefined ? { caption } : undefined,
-          ),
+        () => telegram.sendVoice(chatId, data, caption !== undefined ? { caption } : undefined),
         options,
       ),
 
-    getFileLink: (fileId) =>
-      retrying("getFileLink", () => telegram.getFileLink(fileId), options),
+    getFileLink: (fileId) => retrying("getFileLink", () => telegram.getFileLink(fileId), options),
   };
 }

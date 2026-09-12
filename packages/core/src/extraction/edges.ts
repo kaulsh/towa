@@ -1,15 +1,11 @@
-import { randomUUID } from "node:crypto";
-
 import type { Kysely } from "kysely";
 
-import { VALID_TO_OPEN_SENTINEL } from "../db/constants.js";
-import type { Database } from "../db/types.js";
+import { randomUUID } from "node:crypto";
 
-import type {
-  ExtractedEdge,
-  PreparedEdgeWrite,
-  ResolvedEntity,
-} from "./types.js";
+import type { Database } from "../db/types.js";
+import type { ExtractedEdge, PreparedEdgeWrite, ResolvedEntity } from "./types.js";
+
+import { VALID_TO_OPEN_SENTINEL } from "../db/constants.js";
 
 /**
  * Prepare bitemporal edge writes (§2.3):
@@ -28,9 +24,7 @@ export async function prepareEdgeWrites(
   episodeClosedAt: number,
   ingestedAt: number,
 ): Promise<PreparedEdgeWrite[]> {
-  const mentionToNode = new Map(
-    resolved.map((r) => [r.mentionId, r.nodeId] as const),
-  );
+  const mentionToNode = new Map(resolved.map((r) => [r.mentionId, r.nodeId] as const));
   const prepared: PreparedEdgeWrite[] = [];
 
   for (const edge of edges) {
@@ -54,12 +48,7 @@ export async function prepareEdgeWrites(
     let closeValidTo = validFrom;
 
     if (edge.cardinality === "single" && edge.contradicts_existing) {
-      const openEdges = await findOpenEdges(
-        db,
-        subjectId,
-        edge.relation_label,
-        ingestedAt,
-      );
+      const openEdges = await findOpenEdges(db, subjectId, edge.relation_label, ingestedAt);
       for (const existing of openEdges) {
         // Clear contradiction: different object (node or literal).
         const sameObject =

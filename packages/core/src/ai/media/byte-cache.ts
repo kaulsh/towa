@@ -14,11 +14,7 @@ export interface CachedMediaBytes {
 const cache = new Map<string, CachedMediaBytes>();
 
 /** Store bytes for a platform file id. Overwrites any prior entry. */
-export function putMediaBytes(
-  fileId: string,
-  data: Buffer,
-  mimeType: string,
-): void {
+export function putMediaBytes(fileId: string, data: Buffer, mimeType: string): void {
   cache.set(fileId, { data, mimeType });
 }
 

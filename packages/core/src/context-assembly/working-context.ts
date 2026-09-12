@@ -1,12 +1,9 @@
 import type { Kysely } from "kysely";
 
 import type { Database } from "../db/types.js";
-import { resolveRecentTurns } from "../raw-log/index.js";
 
-import {
-  DEFAULT_SESSION_IDLE_THRESHOLD_SEC,
-  type WorkingContextTurn,
-} from "./types.js";
+import { resolveRecentTurns } from "../raw-log/index.js";
+import { DEFAULT_SESSION_IDLE_THRESHOLD_SEC, type WorkingContextTurn } from "./types.js";
 
 const DEFAULT_LOAD_LIMIT = 200;
 
@@ -78,11 +75,8 @@ export function buildWorkingContext(
     return [];
   }
 
-  const threshold =
-    options.sessionIdleThresholdSec ?? DEFAULT_SESSION_IDLE_THRESHOLD_SEC;
-  const sorted = [...turns].sort(
-    (a, b) => a.timestamp - b.timestamp || a.id - b.id,
-  );
+  const threshold = options.sessionIdleThresholdSec ?? DEFAULT_SESSION_IDLE_THRESHOLD_SEC;
+  const sorted = [...turns].sort((a, b) => a.timestamp - b.timestamp || a.id - b.id);
   const sessionTurns = applySessionBoundary(sorted, threshold);
 
   if (sessionTurns.length <= options.topK) {

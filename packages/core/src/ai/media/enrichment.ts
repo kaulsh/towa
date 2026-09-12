@@ -1,22 +1,19 @@
 import type { Kysely } from "kysely";
 
-import type { InboundMessage, MediaRef } from "../../messages.js";
 import type { Database } from "../../db/types.js";
-import type { ChatMessage, LoadedChatModel, MessagePart } from "../types.js";
-import { getMediaBytes } from "./byte-cache.js";
-import { appendRawLogEdit } from "../../raw-log/index.js";
-import type { ResolvedTurn } from "../../raw-log/resolve-turns.js";
-
 import type { EpisodeTurn } from "../../extraction/types.js";
+import type { InboundMessage, MediaRef } from "../../messages.js";
+import type { ResolvedTurn } from "../../raw-log/resolve-turns.js";
+import type { ChatMessage, LoadedChatModel, MessagePart } from "../types.js";
+
+import { appendRawLogEdit } from "../../raw-log/index.js";
+import { getMediaBytes } from "./byte-cache.js";
 
 /** True when content already has a successful durable media text artifact (§7.3). */
 export function contentHasMediaArtifact(content: string): boolean {
   // Only successful captions/transcripts — presence/failure notes must not
   // block a later retry (sync regenerate or drain).
-  return (
-    content.includes("[image description]:") ||
-    content.includes("[audio transcript]:")
-  );
+  return content.includes("[image description]:") || content.includes("[audio transcript]:");
 }
 
 /**
@@ -52,10 +49,7 @@ export async function enrichTurnsWithMedia(
     }
 
     const artifact = await describeMedia(media, chatModel);
-    const content =
-      turn.content.trim().length > 0
-        ? `${turn.content}\n${artifact}`
-        : artifact;
+    const content = turn.content.trim().length > 0 ? `${turn.content}\n${artifact}` : artifact;
     out.push({ ...turn, content });
   }
   return out;
@@ -163,9 +157,7 @@ export async function captionAndPersistInboundMedia(
     const tip = await db
       .selectFrom("raw_log")
       .select(["content", "is_media_artifact"])
-      .where((eb) =>
-        eb.or([eb("id", "=", original.id), eb("edit_of", "=", original.id)]),
-      )
+      .where((eb) => eb.or([eb("id", "=", original.id), eb("edit_of", "=", original.id)]))
       .where("deleted_marker", "=", 0)
       .orderBy("id", "asc")
       .execute();
@@ -185,8 +177,7 @@ export async function captionAndPersistInboundMedia(
     artifactsByMessageId.set(msg.messageId, artifact);
 
     const wireBase = original.content.trim();
-    const enrichedContent =
-      wireBase.length > 0 ? `${wireBase}\n${artifact}` : artifact;
+    const enrichedContent = wireBase.length > 0 ? `${wireBase}\n${artifact}` : artifact;
 
     if (enrichedContent === latest.content) {
       continue;
@@ -233,9 +224,7 @@ function extractTrailingArtifact(content: string): string | null {
   return content.slice(idx).trim();
 }
 
-function resolveMediaBytes(
-  ref: MediaRef,
-): { data: Buffer; mimeType: string } | null {
+function resolveMediaBytes(ref: MediaRef): { data: Buffer; mimeType: string } | null {
   if (ref.data) {
     return {
       data: Buffer.from(ref.data, "base64"),
@@ -245,10 +234,7 @@ function resolveMediaBytes(
   return getMediaBytes(ref.fileId);
 }
 
-async function describeMedia(
-  ref: MediaRef,
-  chatModel: LoadedChatModel,
-): Promise<string> {
+async function describeMedia(ref: MediaRef, chatModel: LoadedChatModel): Promise<string> {
   if (ref.kind === "audio") {
     return describeAudio(ref, chatModel);
   }
@@ -260,10 +246,7 @@ async function describeMedia(
   return `[${ref.kind} media present (${ref.mimeType}${name}), no content extracted]`;
 }
 
-async function describeAudio(
-  ref: MediaRef,
-  chatModel: LoadedChatModel,
-): Promise<string> {
+async function describeAudio(ref: MediaRef, chatModel: LoadedChatModel): Promise<string> {
   const name = ref.fileName ? ` (${ref.fileName})` : "";
   if (!chatModel.capabilities.audioInput) {
     return `[audio media present${name}, no transcript — model lacks audioInput]`;
@@ -294,10 +277,7 @@ async function describeAudio(
   }
 }
 
-async function describeImage(
-  ref: MediaRef,
-  chatModel: LoadedChatModel,
-): Promise<string> {
+async function describeImage(ref: MediaRef, chatModel: LoadedChatModel): Promise<string> {
   const name = ref.fileName ? ` (${ref.fileName})` : "";
   if (!chatModel.capabilities.vision) {
     return `[image media present${name}, no caption — model lacks vision]`;

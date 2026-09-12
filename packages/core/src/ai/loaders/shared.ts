@@ -1,11 +1,8 @@
 import type { ZodType } from "zod";
+
 import { zodResponseFormat } from "openai/helpers/zod";
-import type {
-  ChatMessage,
-  ChatModelCapabilities,
-  GenerateInput,
-  MessagePart,
-} from "../types.js";
+
+import type { ChatMessage, ChatModelCapabilities, GenerateInput, MessagePart } from "../types.js";
 
 /** Extract a JSON Schema object from a Zod schema via the OpenAI helper. */
 export function zodToJsonSchema(schema: ZodType): Record<string, unknown> {
@@ -53,33 +50,20 @@ export function assertGenerateCapabilities(
         "Callers must fall back to prompt-based JSON + parse (§8.1); loaders do not degrade silently.",
     );
   }
-  if (
-    input.tools !== undefined &&
-    input.tools.length > 0 &&
-    !capabilities.toolCalling
-  ) {
-    throw new Error(
-      "generate() was called with tools but capabilities.toolCalling is false.",
-    );
+  if (input.tools !== undefined && input.tools.length > 0 && !capabilities.toolCalling) {
+    throw new Error("generate() was called with tools but capabilities.toolCalling is false.");
   }
   for (const message of input.messages) {
     if (messageHasImage(message.content) && !capabilities.vision) {
-      throw new Error(
-        "generate() received image content but capabilities.vision is false.",
-      );
+      throw new Error("generate() received image content but capabilities.vision is false.");
     }
     if (messageHasAudio(message.content) && !capabilities.audioInput) {
-      throw new Error(
-        "generate() received audio content but capabilities.audioInput is false.",
-      );
+      throw new Error("generate() received audio content but capabilities.audioInput is false.");
     }
   }
 }
 
-export function parseStructuredText(
-  text: string,
-  schema: ZodType,
-): unknown {
+export function parseStructuredText(text: string, schema: ZodType): unknown {
   const trimmed = text.trim();
   // Strip common markdown fences some models still emit under JSON mode.
   const unfenced = trimmed

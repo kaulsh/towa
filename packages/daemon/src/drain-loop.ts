@@ -24,9 +24,7 @@ export interface ExtractionDrainLoopHandle {
  * `pending`/`in_progress` for a later retry and the error is rethrown so the
  * caller can back off. No LLM work runs inside an open SQLite write transaction.
  */
-async function processNextExtraction(
-  deps: RunExtractionDeps,
-): Promise<"worked" | "idle"> {
+async function processNextExtraction(deps: RunExtractionDeps): Promise<"worked" | "idle"> {
   const { db, chatModel, embeddingModel } = deps;
   const log = getLogger("process-next-extraction");
 
@@ -36,10 +34,7 @@ async function processNextExtraction(
     return "idle";
   }
 
-  log.info(
-    { episodeId: row.episodeId, status: row.status },
-    "extracting episode",
-  );
+  log.info({ episodeId: row.episodeId, status: row.status }, "extracting episode");
 
   try {
     await runExtraction(row.episodeId, {
@@ -50,10 +45,7 @@ async function processNextExtraction(
     log.info({ episodeId: row.episodeId }, "extraction done");
     return "worked";
   } catch (err) {
-    log.error(
-      { err, episodeId: row.episodeId },
-      "extraction failed; leaving status for retry",
-    );
+    log.error({ err, episodeId: row.episodeId }, "extraction failed; leaving status for retry");
     throw err;
   }
 }

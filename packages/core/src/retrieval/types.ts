@@ -43,7 +43,4 @@ export interface KgFact {
 }
 
 /** Re-export query-gen shapes so retrieval consumers can import from one place. */
-export type {
-  HistoryRequest,
-  QueryGenResult,
-} from "../ai/query-gen.js";
+export type { HistoryRequest, QueryGenResult } from "../ai/query-gen.js";

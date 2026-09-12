@@ -1,8 +1,9 @@
 import type { Kysely } from "kysely";
+
 import { sql } from "kysely";
 
-import type { Database } from "../db/types.js";
 import type { LoadedEmbeddingModel } from "../ai/types.js";
+import type { Database } from "../db/types.js";
 
 import { escapeFtsQuery } from "./fts-index.js";
 import {
@@ -46,10 +47,7 @@ export async function multiSignalSearch(
  * score(episode) = Σ 1/(k + rank) across ranked lists.
  * Pure arithmetic — no score calibration between BM25 and cosine.
  */
-function mergeRrf(
-  lists: readonly (readonly SearchHit[])[],
-  k: number = RRF_K,
-): RrfScoredEpisode[] {
+function mergeRrf(lists: readonly (readonly SearchHit[])[], k: number = RRF_K): RrfScoredEpisode[] {
   const scores = new Map<number, { score: number; edgeIds: Set<string> }>();
 
   for (const list of lists) {
@@ -106,11 +104,7 @@ async function searchLexical(
 
     let position = 0;
     for (const row of rows.rows) {
-      const episodeId = await resolveEpisodeId(
-        db,
-        row.source_type,
-        row.source_id,
-      );
+      const episodeId = await resolveEpisodeId(db, row.source_type, row.source_id);
       if (episodeId === null) {
         continue;
       }

@@ -1,10 +1,7 @@
 import { z } from "zod";
 
 import type { WorkingContextTurn } from "../context-assembly/types.js";
-import { getLogger } from "../logging.js";
 import type { ToolExecutor, TurnMediaRef } from "../tools/types.js";
-
-import { generateStructured } from "./structured.js";
 import type {
   ChatMessage,
   GenerateUsage,
@@ -12,6 +9,9 @@ import type {
   MessagePart,
   ToolDefinition,
 } from "./types.js";
+
+import { getLogger } from "../logging.js";
+import { generateStructured } from "./structured.js";
 
 /** Hard cap on answer-generation tool rounds (§5.4). */
 const TOOL_MAX_ROUNDS = 8;
@@ -73,19 +73,15 @@ function buildPipelineMessages(input: {
   mediaParts?: readonly MessagePart[];
 }): ChatMessage[] {
   const retrieved =
-    input.retrievedBlocks.trim().length > 0
-      ? input.retrievedBlocks
-      : "## Retrieved memory\n(none)";
+    input.retrievedBlocks.trim().length > 0 ? input.retrievedBlocks : "## Retrieved memory\n(none)";
   const userText = `${retrieved}\n\n## Current message\n${input.message}`;
 
   return [
     { role: "system", content: input.system },
-    ...input.workingContext.map(
-      (t): ChatMessage => ({
-        role: t.role,
-        content: t.content,
-      }),
-    ),
+    ...input.workingContext.map((t): ChatMessage => ({
+      role: t.role,
+      content: t.content,
+    })),
     {
       role: "user",
       content: buildUserContent(userText, input.mediaParts),
@@ -120,8 +116,7 @@ Never ask the user to provide or re-send audio. Never mark insufficient to obtai
 function formatMediaInventory(refs: readonly TurnMediaRef[]): string {
   if (refs.length === 0) return "";
   const lines = refs.map(
-    (r) =>
-      `- ${r.ref}${r.fileName ? ` (${r.fileName})` : ""} — ${r.kind}, ${r.mimeType}`,
+    (r) => `- ${r.ref}${r.fileName ? ` (${r.fileName})` : ""} — ${r.kind}, ${r.mimeType}`,
   );
   return `\n## Turn media refs (for fs_write source)\n${lines.join("\n")}\nUse source \"media:N\" with fs_write to persist these bytes to an allowed path.\n`;
 }
@@ -185,15 +180,10 @@ Return JSON: either {"insufficient":false} or {"insufficient":true,"follow_up_qu
     mediaParts: input.mediaParts,
   });
 
-  const { value: raw, usage } = await generateStructured(
-    chatModel,
-    messages,
-    AssessOutputSchema,
-    {
-      schemaDescription:
-        'Return JSON either {"insufficient":false} or {"insufficient":true,"follow_up_queries":["memory search phrase",...]} — follow_up_queries are search strings, not questions to the user.',
-    },
-  );
+  const { value: raw, usage } = await generateStructured(chatModel, messages, AssessOutputSchema, {
+    schemaDescription:
+      'Return JSON either {"insufficient":false} or {"insufficient":true,"follow_up_queries":["memory search phrase",...]} — follow_up_queries are search strings, not questions to the user.',
+  });
 
   if (raw.insufficient === true) {
     return {
@@ -253,7 +243,7 @@ async function generateWithTools(input: {
       messages,
       tools: input.tools,
     });
-    
+
     if (out.usage) {
       lastUsage = out.usage;
     }
@@ -338,8 +328,7 @@ async function generateWithTools(input: {
     lastUsage = final.usage;
   }
   const text =
-    final.text.trim() ||
-    "I hit the tool-use limit before finishing. Please try a simpler request.";
+    final.text.trim() || "I hit the tool-use limit before finishing. Please try a simpler request.";
   return {
     text,
     roundsUsed,

@@ -3,22 +3,25 @@
   "version": "0.1.0",
   "private": true,
   "description": "Towa — AI agent harness for durable long-term memory recall.",
+  "keywords": [],
+  "license": "ISC",
+  "author": "",
   "type": "module",
   "scripts": {
     "typecheck": "pnpm --stream --filter @towa/* run typecheck",
     "build": "pnpm --stream --filter @towa/* build",
     "dev": "export FORCE_COLOR=1 && pnpm run build && pnpm --stream --parallel --filter @towa/* dev",
     "daemon": "export FORCE_COLOR=1 && pnpm --stream --filter @towa/daemon start",
-    "cli": "pnpm --filter @towa/daemon cli"
+    "cli": "pnpm --filter @towa/daemon cli",
+    "format": "oxfmt",
+    "format:check": "oxfmt --check"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
-  "packageManager": "pnpm@10.13.1",
   "devDependencies": {
     "@types/node": "^22.15.32",
+    "oxfmt": "^0.62.0",
     "typescript": "^5.8.3"
   },
+  "packageManager": "pnpm@10.13.1",
   "pnpm": {
     "onlyBuiltDependencies": [
       "better-sqlite3"

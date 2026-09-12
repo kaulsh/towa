@@ -116,10 +116,7 @@ function isConnectionFailure(err: unknown): boolean {
   return false;
 }
 
-async function withDaemonReachable<T>(
-  port: number,
-  run: () => Promise<T>,
-): Promise<T> {
+async function withDaemonReachable<T>(port: number, run: () => Promise<T>): Promise<T> {
   try {
     return await run();
   } catch (err) {
@@ -153,19 +150,13 @@ async function postCommand(
       // keep text
     }
     if (!res.ok) {
-      throw new Error(
-        `POST /command ${command} failed HTTP ${res.status}: ${text.slice(0, 500)}`,
-      );
+      throw new Error(`POST /command ${command} failed HTTP ${res.status}: ${text.slice(0, 500)}`);
     }
     return body;
   });
 }
 
-async function streamLogs(
-  port: number,
-  lines: number,
-  follow: boolean,
-): Promise<void> {
+async function streamLogs(port: number, lines: number, follow: boolean): Promise<void> {
   await withDaemonReachable(port, async () => {
     const params = new URLSearchParams();
     params.set("lines", String(lines));
@@ -177,9 +168,7 @@ async function streamLogs(
     });
     if (!res.ok || !res.body) {
       const text = await res.text();
-      throw new Error(
-        `GET /logs failed HTTP ${res.status}: ${text.slice(0, 500)}`,
-      );
+      throw new Error(`GET /logs failed HTTP ${res.status}: ${text.slice(0, 500)}`);
     }
 
     const reader = res.body.getReader();

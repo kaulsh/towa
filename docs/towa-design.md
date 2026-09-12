@@ -1,6 +1,6 @@
 # Towa — Design Document
 
-*A Telegram-native AI agent harness built around one thesis: memory recall is the product. "Eternity" (永遠) — never forgetting a detail, no matter how many years pass.*
+_A Telegram-native AI agent harness built around one thesis: memory recall is the product. "Eternity" (永遠) — never forgetting a detail, no matter how many years pass._
 
 ---
 
@@ -26,8 +26,8 @@
 
 Towa's north star is often stated as "never forget anything," but that phrase bundles two unrelated engineering problems that must be split immediately, because conflating them corrupts every downstream decision:
 
-- **Storage** — keeping the raw record. This is a *non-problem*. Five years of heavy daily use (~500 msgs/day) is under a million rows and single-digit GB even with embeddings on every message. There is no scenario in which Towa needs to delete anything for space.
-- **Recall** — surfacing the right record, out of years of history, into a bounded context window, at the right moment. This is the *entire* engineering challenge of the project.
+- **Storage** — keeping the raw record. This is a _non-problem_. Five years of heavy daily use (~500 msgs/day) is under a million rows and single-digit GB even with embeddings on every message. There is no scenario in which Towa needs to delete anything for space.
+- **Recall** — surfacing the right record, out of years of history, into a bounded context window, at the right moment. This is the _entire_ engineering challenge of the project.
 
 **Core architectural rule: the raw log is immutable and lossless; everything else is a rebuildable index pointing back into it.**
 
@@ -47,7 +47,7 @@ flowchart TB
     GI -.provenance pointers.-> RL
 ```
 
-"Compaction," in Towa, never means discarding fidelity from the source. It only ever means *building or pruning an index*. If you ever need to change your embedding model, rewrite your KG extraction prompts, or redesign retrieval entirely, you throw away and rebuild the index planes — the raw log never has to be touched or trusted less.
+"Compaction," in Towa, never means discarding fidelity from the source. It only ever means _building or pruning an index_. If you ever need to change your embedding model, rewrite your KG extraction prompts, or redesign retrieval entirely, you throw away and rebuild the index planes — the raw log never has to be touched or trusted less.
 
 ---
 
@@ -86,7 +86,7 @@ Edits and deletes **never mutate a row in place** — they append a new row refe
 
 This gives burst-grouping ("hey" / "wait" / "so the thing is—" as three rapid messages) for free, with no persisted state — episodes are recomputed from source at any time.
 
-This is distinct from the **runtime debounce** used to decide *when to respond* (see §6) — debounce is ephemeral inference-time state; the episode boundary is implied by the log itself once a reply has been sent.
+This is distinct from the **runtime debounce** used to decide _when to respond_ (see §6) — debounce is ephemeral inference-time state; the episode boundary is implied by the log itself once a reply has been sent.
 
 ```
 episodes
@@ -147,14 +147,14 @@ episode_gists
 
 **Single SQLite file. No database server, no separate graph engine, no message broker.**
 
-| Concern | Choice | Why |
-|---|---|---|
-| Relational + graph storage | SQLite, single file | Zero-service durability story: `cp towa.db backup.db` is the entire backup strategy. Portable, syncable. Matches "one stateful thing forever" for a single-user tool. |
-| Vector search | `sqlite-vec` | Brute-force linear scan is fine at single-user scale (tens of thousands of vectors, sub-10ms). No ANN index needed — the thing that would justify pgvector's HNSW doesn't exist here. |
-| Lexical search | FTS5 (built-in) | BM25 in-engine, no extra dependency, sets up hybrid retrieval cleanly. |
-| Graph traversal | Recursive CTEs over `kg_nodes`/`kg_edges` | At tens of thousands of edges, 2–3 hop traversal is sub-millisecond. A dedicated graph DB (Neo4j, Apache AGE) buys performance headroom this project will never use, at the cost of an extra service and a shakier extension-maintenance story. |
-| Concurrency | WAL mode + `PRAGMA busy_timeout` | Readers never block on writers (WAL). The single-writer constraint only serializes writer-vs-writer, which here means two short, rarely-overlapping transactions (see §4.2) — `busy_timeout` turns any contention into a brief wait instead of an error. |
-| Driver | `better-sqlite3` | Synchronous, fast for embedded single-user use, supports `loadExtension` for `sqlite-vec`. |
+| Concern                    | Choice                                    | Why                                                                                                                                                                                                                                                      |
+| -------------------------- | ----------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Relational + graph storage | SQLite, single file                       | Zero-service durability story: `cp towa.db backup.db` is the entire backup strategy. Portable, syncable. Matches "one stateful thing forever" for a single-user tool.                                                                                    |
+| Vector search              | `sqlite-vec`                              | Brute-force linear scan is fine at single-user scale (tens of thousands of vectors, sub-10ms). No ANN index needed — the thing that would justify pgvector's HNSW doesn't exist here.                                                                    |
+| Lexical search             | FTS5 (built-in)                           | BM25 in-engine, no extra dependency, sets up hybrid retrieval cleanly.                                                                                                                                                                                   |
+| Graph traversal            | Recursive CTEs over `kg_nodes`/`kg_edges` | At tens of thousands of edges, 2–3 hop traversal is sub-millisecond. A dedicated graph DB (Neo4j, Apache AGE) buys performance headroom this project will never use, at the cost of an extra service and a shakier extension-maintenance story.          |
+| Concurrency                | WAL mode + `PRAGMA busy_timeout`          | Readers never block on writers (WAL). The single-writer constraint only serializes writer-vs-writer, which here means two short, rarely-overlapping transactions (see §4.2) — `busy_timeout` turns any contention into a brief wait instead of an error. |
+| Driver                     | `better-sqlite3`                          | Synchronous, fast for embedded single-user use, supports `loadExtension` for `sqlite-vec`.                                                                                                                                                               |
 
 **Explicitly rejected:** Postgres+pgvector (server overhead not justified at this scale), Neo4j/Apache AGE (graph-DB justification evaporates at single-user scale; AGE's extension-maintenance story is a bad long-term bet), RabbitMQ (see §11).
 
@@ -166,7 +166,7 @@ episode_gists
 
 Extraction (entity resolution, edge writes, gist generation) runs **after** the agent has already replied, off a background queue — never inline before the response, which would stall every message behind a multi-second LLM call. The same pass applies **fact-level KG salience** (§2.3): only durable personal facts become nodes/edges; the gist is always written.
 
-**Why this is safe, not just fast:** the read-your-writes gap this could create is already closed by earlier layers. The raw log is written **synchronously** (a plain fast insert), so verbatim content is immediately searchable by FTS5/vec. Recently-stated facts also live in the working-context buffer (§6) regardless of KG state. The KG only needs to have caught up by the time a fact becomes *old* — and old facts were extracted long ago. A few seconds of extraction lag costs nothing in practice.
+**Why this is safe, not just fast:** the read-your-writes gap this could create is already closed by earlier layers. The raw log is written **synchronously** (a plain fast insert), so verbatim content is immediately searchable by FTS5/vec. Recently-stated facts also live in the working-context buffer (§6) regardless of KG state. The KG only needs to have caught up by the time a fact becomes _old_ — and old facts were extracted long ago. A few seconds of extraction lag costs nothing in practice.
 
 ### 4.2 Queue & serialization
 
@@ -181,7 +181,7 @@ pending_extraction
 
 - Foreground (channel handler): on episode close, `INSERT INTO pending_extraction ... status='pending'` — a sub-millisecond transaction.
 - Background (drain loop, owned by the daemon process — no separate OS process): repeatedly calls the daemon's `processNextExtraction` tick, which claims at most one `pending`/`in_progress` episode via core queue helpers (`listResumableExtractions`), then calls core's `runExtraction` (marks `in_progress`, does the slow work **outside any transaction**, commits KG writes + gist and marks `done` in one short final transaction). Core exports the KG/queue primitives only; the daemon owns the tick, scheduling, idle sleep, and shutdown.
-- SQLite's "one writer" constraint is per-instant, not per-process — any number of connections may *issue* writes; conflicting ones just serialize. Because both transactions here are short and rarely overlap, contention is a non-issue with `busy_timeout` set.
+- SQLite's "one writer" constraint is per-instant, not per-process — any number of connections may _issue_ writes; conflicting ones just serialize. Because both transactions here are short and rarely overlap, contention is a non-issue with `busy_timeout` set.
 - Crash recovery: on restart, re-scan for `pending`/`in_progress` rows and resume. Nothing is lost — episodes are idempotently re-extractable from the raw log.
 
 ```mermaid
@@ -226,9 +226,9 @@ This is the core of the product. A new message lands; a bounded context pack (fi
 
 ### 5.1 Why not free-form agentic tool calls
 
-The obvious design — give the model `search_memory`/`traverse_entity` tools and let it decide when to use them — fails in practice on smaller/local models, which frequently just don't call the tool. The fix is not "add a fallback pre-retrieval pass" (that only covers queries whose raw text already contains the right search terms — it whiffs on exactly the vague, underspecified recall Towa exists for, e.g. *"what was that restaurant you liked?"*).
+The obvious design — give the model `search_memory`/`traverse_entity` tools and let it decide when to use them — fails in practice on smaller/local models, which frequently just don't call the tool. The fix is not "add a fallback pre-retrieval pass" (that only covers queries whose raw text already contains the right search terms — it whiffs on exactly the vague, underspecified recall Towa exists for, e.g. _"what was that restaurant you liked?"_).
 
-**The actual fix: retrieval is a mandatory pipeline stage the model can only fill in, never skip.** Small models are unreliable at deciding *whether* to act, but reliable at *doing* a bounded task when always asked. So every stage below is forced, with structured output — there is no "whether to search" decision left for the model to fumble.
+**The actual fix: retrieval is a mandatory pipeline stage the model can only fill in, never skip.** Small models are unreliable at deciding _whether_ to act, but reliable at _doing_ a bounded task when always asked. So every stage below is forced, with structured output — there is no "whether to search" decision left for the model to fumble.
 
 ### 5.2 Pipeline
 
@@ -247,19 +247,19 @@ flowchart LR
     Assess -->|sufficient or last round| Answer["generateAnswer<br/>(plain text + optional tools)"]
 ```
 
-*(Memory loop is capped at a fixed K rounds, e.g. K=2–3 — a hard bound, not model discretion, so a stuck loop can't run away. The answer tool loop has its own separate hard cap.)*
+_(Memory loop is capped at a fixed K rounds, e.g. K=2–3 — a hard bound, not model discretion, so a stuck loop can't run away. The answer tool loop has its own separate hard cap.)_
 
 1. **Forced query-generation** — before answering, the model is given a required structured-output task: produce search queries + entity names from the message + recent context. Not a tool it can decline; a mandatory pipeline stage.
 2. **Multi-signal search** — the three stores are complementary, not redundant:
-   - *Lexical (FTS5)* catches exact tokens — names, numbers, rare words — that vector search's paraphrase-tolerance can miss.
-   - *Semantic (sqlite-vec over gists + KG nodes)* catches paraphrase, "things like this."
-   - *Graph (CTE traversal)* catches structurally-related facts neither of the above surfaces — multi-hop recall ("what's true about my sister") even when the current message never names the entity.
+   - _Lexical (FTS5)_ catches exact tokens — names, numbers, rare words — that vector search's paraphrase-tolerance can miss.
+   - _Semantic (sqlite-vec over gists + KG nodes)_ catches paraphrase, "things like this."
+   - _Graph (CTE traversal)_ catches structurally-related facts neither of the above surfaces — multi-hop recall ("what's true about my sister") even when the current message never names the entity.
 3. **RRF merge** — candidates from all three are fused by summing `1/(k + rank)` per candidate across lists. Pure arithmetic; sidesteps calibrating incomparable scores (BM25 vs. cosine) against each other.
 4. **Context assembly** — resolves to **verbatim raw turns** from the winning episodes (never summaries-in-place-of-source), plus current-valid KG facts.
-5. **Assess memory sufficiency** — a dedicated structured call declares whether retrieved memory is enough for *personal-memory* questions: `{insufficient: false}` or `{insufficient: true, follow_up_queries: [...]}`. It does **not** produce the user-facing reply (combining answer + gate in one schema was unreliable in practice, and native tool calling does not mix cleanly with that dual schema).
+5. **Assess memory sufficiency** — a dedicated structured call declares whether retrieved memory is enough for _personal-memory_ questions: `{insufficient: false}` or `{insufficient: true, follow_up_queries: [...]}`. It does **not** produce the user-facing reply (combining answer + gate in one schema was unreliable in practice, and native tool calling does not mix cleanly with that dual schema).
 6. **generateAnswer** — after the memory loop settles (sufficient, or last round), a separate plain-text generation produces the user reply. When tools are enabled in daemon config and `capabilities.toolCalling` is true, this call runs a bounded native tool loop (§5.4). Headroom `promptTokens` come from this answer generate.
 
-**Retrieved-context packing:** RRF-ranked candidate episodes are taken in rank order up to a fixed **top-K** (code default; see §6). There is no pre-call `countTokens()` fill-until-budget — tokenizer estimates are unreliable across local models (Gemma/Qwen vs tiktoken), and Ollama/OpenAI usage fields only arrive *after* the generate call. Under headroom pressure from the previous turn's reported prompt tokens (§6), K is tightened for the next turn rather than failing or retrying the current one.
+**Retrieved-context packing:** RRF-ranked candidate episodes are taken in rank order up to a fixed **top-K** (code default; see §6). There is no pre-call `countTokens()` fill-until-budget — tokenizer estimates are unreliable across local models (Gemma/Qwen vs tiktoken), and Ollama/OpenAI usage fields only arrive _after_ the generate call. Under headroom pressure from the previous turn's reported prompt tokens (§6), K is tightened for the next turn rather than failing or retrying the current one.
 
 ### 5.3 Temporal-aware retrieval
 
@@ -269,7 +269,7 @@ Default retrieval resolves **only currently-true facts**:
 WHERE valid_from <= :now AND :now < valid_to   -- valid_to uses the far-future sentinel when open
 ```
 
-Superseded (closed) edges are excluded by default. A dedicated **`get_history(entity, relation)`** target returns the full validity timeline when a question is explicitly historical ("what did I used to think about X?", "where did I live before?"). Implicit past-tense detection in query-gen can *widen* retrieval to include history as a soft hint, but is never load-bearing — it's not trusted as the sole gate to the historical layer, since that would be exactly the kind of small-model judgment call the rest of this design routes around.
+Superseded (closed) edges are excluded by default. A dedicated **`get_history(entity, relation)`** target returns the full validity timeline when a question is explicitly historical ("what did I used to think about X?", "where did I live before?"). Implicit past-tense detection in query-gen can _widen_ retrieval to include history as a soft hint, but is never load-bearing — it's not trusted as the sole gate to the historical layer, since that would be exactly the kind of small-model judgment call the rest of this design routes around.
 
 When both current and historical facts land in context together, they are presented to the generation call as **distinct labeled blocks** so the model doesn't blur "you used to" with "you do."
 
@@ -277,11 +277,11 @@ When both current and historical facts land in context together, they are presen
 
 §5.1 rejects free-form **memory** tools (`search_memory`, etc.). Non-memory capabilities — web search/fetch and filesystem access — are different: they are **built-in tools** (not user-defined via config), enabled by daemon YAML booleans, and attached only to `generateAnswer` after forced retrieval.
 
-| Tool | Backend | Notes |
-|---|---|---|
-| `web_search` | SerpAPI or Firecrawl | Provider via `tools.web.search` (`serpapi` \| `firecrawl`); keys `SERPAPI_API_KEY` / `FIRECRAWL_API_KEY` |
-| `web_fetch` | Firecrawl or native `fetch` | Provider via `tools.web.fetch` (`firecrawl` \| `fetchapi`); Firecrawl needs `FIRECRAWL_API_KEY`; `fetchapi` needs none (rough HTML→text, size-capped) |
-| `fs_list` / `fs_read` / `fs_write` | local FS | sandbox root + config allowlist + per-turn path grant when the path string appears in the user message; `fs_write` may take `source: "media:N"` for turn-scoped inbound media bytes |
+| Tool                               | Backend                     | Notes                                                                                                                                                                               |
+| ---------------------------------- | --------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `web_search`                       | SerpAPI or Firecrawl        | Provider via `tools.web.search` (`serpapi` \| `firecrawl`); keys `SERPAPI_API_KEY` / `FIRECRAWL_API_KEY`                                                                            |
+| `web_fetch`                        | Firecrawl or native `fetch` | Provider via `tools.web.fetch` (`firecrawl` \| `fetchapi`); Firecrawl needs `FIRECRAWL_API_KEY`; `fetchapi` needs none (rough HTML→text, size-capped)                               |
+| `fs_list` / `fs_read` / `fs_write` | local FS                    | sandbox root + config allowlist + per-turn path grant when the path string appears in the user message; `fs_write` may take `source: "media:N"` for turn-scoped inbound media bytes |
 
 No plugin registry. Scheduling / code execution / mini-apps are deferred until this tool loop exists (§11). Tool calling must not be combined with structured `response_format` on the same generate call.
 
@@ -293,7 +293,7 @@ Per turn: forced memory retrieval loop (§5.2) → `generateAnswer` (plain text,
 
 **Working-context buffer:** a sliding window of the most recent raw turns, packed by a fixed **top-K turn count** (after the session boundary), not by pre-call token measurement. When a turn ages out of the window, it is **dropped, not summarized** — no rolling-summary layer. This is safe specifically because every episode is unconditionally gisted+embedded (§2.4) regardless of whether KG extraction judged anything "important" — so anything that ages out remains fully findable by the same forced-retrieval pipeline that runs every turn anyway. The window size is therefore a UX/cost tuning knob (avoiding unnecessary retrieval round-trips for content still obviously part of the live thread), not a correctness knob — nothing is ever actually lost. Because inbound turns are persisted before retrieval runs, the trailing unanswered user burst is **excluded** from the working-context window and supplied only as the live `message` (+ media) on the final user turn for query-gen, sufficiency assess, and answer generate — so it is not double-counted.
 
-**Headroom governor (next-turn throttle):** after each turn's **answer** generate, the harness records `usage.promptTokens` from the provider response (OpenAI-compatible `usage.prompt_tokens`, when present) per chat, along with whether that turn's packing was already tightened. The next turn compares consecutive samples **relatively** — no absolute context-window size is required or stored. Code defaults: meaningful rise (`last / previous ≥ ~1.15`) tightens both working and retrieved top-K (half of defaults, with small floors); once tightened, pressure sticks until a substantial drop (`last / previous < ~0.85`) releases back to defaults; cold start / single sample / missing usage → defaults. Packing/headroom constants are **not** daemon YAML knobs — only debounce and `session_idle_threshold_sec` are exposed there. This is deliberately **not** shrink-on-failure for the current turn — no overflow retry loop; pressure only affects subsequent packing. Usage metrics are never a substitute for deciding which *candidate* block fits mid-assembly; they only govern how aggressive the next fixed-K pack is.
+**Headroom governor (next-turn throttle):** after each turn's **answer** generate, the harness records `usage.promptTokens` from the provider response (OpenAI-compatible `usage.prompt_tokens`, when present) per chat, along with whether that turn's packing was already tightened. The next turn compares consecutive samples **relatively** — no absolute context-window size is required or stored. Code defaults: meaningful rise (`last / previous ≥ ~1.15`) tightens both working and retrieved top-K (half of defaults, with small floors); once tightened, pressure sticks until a substantial drop (`last / previous < ~0.85`) releases back to defaults; cold start / single sample / missing usage → defaults. Packing/headroom constants are **not** daemon YAML knobs — only debounce and `session_idle_threshold_sec` are exposed there. This is deliberately **not** shrink-on-failure for the current turn — no overflow retry loop; pressure only affects subsequent packing. Usage metrics are never a substitute for deciding which _candidate_ block fits mid-assembly; they only govern how aggressive the next fixed-K pack is.
 
 **Session boundary:** an idle gap beyond a threshold (e.g. >2 hours) resets the working-context buffer rather than letting it slide continuously. The first message of a new session naturally triggers retrieval to pull back whatever's relevant; carrying yesterday's tail forward is dead weight.
 
@@ -429,13 +429,13 @@ There is **no `countTokens()` on the chat model.** Context packing uses fixed to
 
 ### 8.2 Loaders
 
-| Loader | Role | Notes |
-|---|---|---|
-| `loadOpenAICompatible(config)` | chat | **Sole chat loader.** Parameterized by `baseURL` — covers OpenAI, OpenRouter, Groq, Together, vLLM, LM Studio, and Ollama's OpenAI-compatible `/v1` endpoint. Daemon YAML requires an explicit `models.chat.base_url` (no implicit local default; recipe configs can pin Ollama vs OpenAI later). Vision via `image_url` parts; voice notes via `/v1/audio/transcriptions`. |
-| `loadOpenAICompatibleEmbeddings(config)` | embedding | Same OpenAI-shaped embeddings API when not using local embeddings. |
-| `loadLocalEmbeddings(config)` | embedding | Local embedding model via `transformers.js`/ONNX, **run on CPU** (see §8.4). Fires every turn via query-gen — highest-frequency call; kept local-first. |
+| Loader                                   | Role      | Notes                                                                                                                                                                                                                                                                                                                                                                       |
+| ---------------------------------------- | --------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `loadOpenAICompatible(config)`           | chat      | **Sole chat loader.** Parameterized by `baseURL` — covers OpenAI, OpenRouter, Groq, Together, vLLM, LM Studio, and Ollama's OpenAI-compatible `/v1` endpoint. Daemon YAML requires an explicit `models.chat.base_url` (no implicit local default; recipe configs can pin Ollama vs OpenAI later). Vision via `image_url` parts; voice notes via `/v1/audio/transcriptions`. |
+| `loadOpenAICompatibleEmbeddings(config)` | embedding | Same OpenAI-shaped embeddings API when not using local embeddings.                                                                                                                                                                                                                                                                                                          |
+| `loadLocalEmbeddings(config)`            | embedding | Local embedding model via `transformers.js`/ONNX, **run on CPU** (see §8.4). Fires every turn via query-gen — highest-frequency call; kept local-first.                                                                                                                                                                                                                     |
 
-**Rejected as dedicated loaders:** native `loadOllama` (auto-pull + `/api/chat` + `/api/tokenize`) and in-process `loadLlamaCpp` (`node-llama-cpp`). Ollama remains the recommended *server* for local chat, accessed only through its OpenAI-compatible API — duplicate HTTP clients and an always-resident GGUF path did not earn their keep for a long-lived daemon (see §11). Anthropic / HuggingFace native loaders stay unimplemented until there is a concrete consumer.
+**Rejected as dedicated loaders:** native `loadOllama` (auto-pull + `/api/chat` + `/api/tokenize`) and in-process `loadLlamaCpp` (`node-llama-cpp`). Ollama remains the recommended _server_ for local chat, accessed only through its OpenAI-compatible API — duplicate HTTP clients and an always-resident GGUF path did not earn their keep for a long-lived daemon (see §11). Anthropic / HuggingFace native loaders stay unimplemented until there is a concrete consumer.
 
 **Per-role configuration** (daemon may still share one chat model across reply + extraction today): `chatModel` and `embeddingModel` are configured independently. Chat always goes through `loadOpenAICompatible` with an explicit `baseURL`; embeddings default to local CPU (`loadLocalEmbeddings`) with an openai-compatible escape hatch.
 
@@ -459,12 +459,12 @@ Harness: **promptfoo + Langfuse** (already the production eval stack in use for 
 
 ### 9.1 Internal gold-set evals
 
-| Eval | Tests | Data source |
-|---|---|---|
-| Retrieval recall@k | Does the forced pipeline (§5) surface the right episode within K rounds | `(query, expected episode-id)` pairs mined from real usage |
-| Entity resolution precision/recall | §4.3's bias-toward-split — track **false-merge rate** especially, since that's the costly failure mode | `(mention, expected node-id)` pairs |
-| Temporal correctness | Present-vs-historical resolution (§5.3), edge invalidation (§2.3) | Small hand-built adversarial set: seed a fact, supersede it, query both present and `get_history` |
-| North-star longitudinal recall | The actual product thesis — cold-query Towa about obscure one-off details at increasing time distances (1 week / 1 month / 6 months / 1 year+) | Periodically mined from the growing raw log |
+| Eval                               | Tests                                                                                                                                          | Data source                                                                                       |
+| ---------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| Retrieval recall@k                 | Does the forced pipeline (§5) surface the right episode within K rounds                                                                        | `(query, expected episode-id)` pairs mined from real usage                                        |
+| Entity resolution precision/recall | §4.3's bias-toward-split — track **false-merge rate** especially, since that's the costly failure mode                                         | `(mention, expected node-id)` pairs                                                               |
+| Temporal correctness               | Present-vs-historical resolution (§5.3), edge invalidation (§2.3)                                                                              | Small hand-built adversarial set: seed a fact, supersede it, query both present and `get_history` |
+| North-star longitudinal recall     | The actual product thesis — cold-query Towa about obscure one-off details at increasing time distances (1 week / 1 month / 6 months / 1 year+) | Periodically mined from the growing raw log                                                       |
 
 ### 9.2 External benchmark
 
@@ -495,8 +495,8 @@ No separate unit/smoke-test framework for now. The gold-set evals above are the 
 
 Recorded so the reasoning isn't lost and isn't accidentally re-litigated without new evidence:
 
-- **Hierarchical rollup summaries (day/month/quarter trees):** deferred. Every query class they'd serve is already covered by timestamp-ranged query-time synthesis or by the KG (high-connectivity nodes *are* the themes). Revisit only if evals (§9) surface a concrete query class neither covers within budget.
-- **ReasoningBank (Google)-style procedural memory:** rejected as a memory store — it's designed to distill *lessons from verifiable task outcomes* and explicitly discards raw trajectories, which is the opposite of Towa's lossless-source thesis, and a private chat has no reliable success/failure signal to learn from. Noted as a possible *future, gated* optional layer specifically for learning retrieval-search strategies (not general memory), conditional on (a) evals showing the fixed forced-retrieval pipeline plateauing, and (b) a real success signal being available for retrieval outcomes.
+- **Hierarchical rollup summaries (day/month/quarter trees):** deferred. Every query class they'd serve is already covered by timestamp-ranged query-time synthesis or by the KG (high-connectivity nodes _are_ the themes). Revisit only if evals (§9) surface a concrete query class neither covers within budget.
+- **ReasoningBank (Google)-style procedural memory:** rejected as a memory store — it's designed to distill _lessons from verifiable task outcomes_ and explicitly discards raw trajectories, which is the opposite of Towa's lossless-source thesis, and a private chat has no reliable success/failure signal to learn from. Noted as a possible _future, gated_ optional layer specifically for learning retrieval-search strategies (not general memory), conditional on (a) evals showing the fixed forced-retrieval pipeline plateauing, and (b) a real success signal being available for retrieval outcomes.
 - **RabbitMQ / any message broker:** rejected for the write-path queue. A broker is unjustified overhead for a single-user, single-writer, in-process flow — a SQLite table + drain loop covers it entirely.
 - **Dedicated graph database (Neo4j, Apache AGE):** rejected. The performance case for a graph engine doesn't exist at single-user scale (tens of thousands of edges, sub-ms CTE traversal), and it would add an operational dependency the single-file/single-process durability model is specifically designed to avoid.
 - **Synchronous (inline) extraction:** rejected — would stall every reply behind a multi-second LLM call. Async is safe because the raw log and working-context buffer already cover the read-your-writes gap for recently-stated facts.
@@ -505,7 +505,7 @@ Recorded so the reasoning isn't lost and isn't accidentally re-litigated without
 - **Dedicated `loadOllama` / `loadLlamaCpp` chat loaders:** rejected. Ollama is reached via `loadOpenAICompatible` + `/v1` (vision, transcriptions, structured `response_format`); auto-pull and `/api/tokenize` were not worth a second HTTP client. In-process `node-llama-cpp` pins VRAM for the daemon lifetime and was never wired into daemon YAML — dropped entirely (§8.2, §8.4).
 - **Pre-call `countTokens()` context packing:** rejected. Fill-until-token-budget depended on inaccurate estimators for local models; replaced by fixed top-K + next-turn usage-relative headroom governor from answer `generate()` usage (§5.2, §6, §8.3). Shrink-on-failure retries for the current turn were considered and declined in favor of the governor.
 - **Required / registry `contextWindow`:** rejected. A static known-model table plus YAML override was maintenance noise and still wrong for server-configured windows; the governor no longer needs an absolute denominator. Do not reintroduce `capabilities.contextWindow`, `KNOWN_CONTEXT_WINDOWS`, or provider-specific context probes.
-- **Generation-doubles-as-sufficiency-gate:** rejected after practice. Combining `{answer}` / `{insufficient, follow_up_queries}` on the user-facing generate was unreliable and blocked a clean native tool loop. Memory sufficiency is now a dedicated structured assess call; the user reply is a separate plain-text (optionally tool-enabled) generate (§5.2). Do **not** add a *third* relevance judge on top of the answer.
+- **Generation-doubles-as-sufficiency-gate:** rejected after practice. Combining `{answer}` / `{insufficient, follow_up_queries}` on the user-facing generate was unreliable and blocked a clean native tool loop. Memory sufficiency is now a dedicated structured assess call; the user reply is a separate plain-text (optionally tool-enabled) generate (§5.2). Do **not** add a _third_ relevance judge on top of the answer.
 - **User-defined / plugin tools via config:** rejected for v1. Tools are a fixed built-in set with YAML enable flags only (§5.4) — no plugin registry.
 - **Scheduling / cron / one-off task runner; code execution / Telegram mini apps:** deferred until the web+FS tool loop is proven. Same tool infra is expected to host them later.
 
@@ -551,18 +551,18 @@ towa/
 
 Storage engines and model providers are covered in §3 and §8. This section covers the supporting libraries used to build on top of them — everything except the harness logic itself (retrieval, extraction, entity resolution, context assembly, etc.), which is custom-built from scratch, per the project's own scope.
 
-| Concern | Library | Notes |
-|---|---|---|
-| SQL query building | **Kysely** | Type-safe query builder over `better-sqlite3` (§3). Chosen over a full ORM (Prisma, Drizzle relational mode) specifically because the design requires two things ORMs tend to fight or can't express: recursive CTEs for graph traversal (§5.2) and `sqlite-vec`'s custom virtual-table functions (`vec_distance_cosine`, etc.). Kysely's raw-fragment escape hatch handles both while keeping everything else type-safe. |
-| Telegram integration | **Telegraf** | Powers `createTelegram` (§7.2). Defaults to long-polling (`bot.launch()`) — zero infrastructure for a single-user daemon. Webhook mode is available via Telegraf's own bundled `webhookCallback`, so no separate HTTP framework is needed even then. |
-| Structured-output validation | **Zod** | Validates every forced-pipeline structured output (query-gen, memory sufficiency assess, entity-resolution verification — §5.1, §4.3) after the JSON-parse fallback (§8.1). A malformed response from a less-capable local model fails loudly instead of silently corrupting state. Also defines tool parameter schemas for native function calling (§5.4). |
-| Web search | **SerpAPI** or **Firecrawl** (HTTP) | `web_search` when `tools.web.search` is set (`serpapi` \| `firecrawl`); keys via `SERPAPI_API_KEY` / `FIRECRAWL_API_KEY`. Hand-rolled `fetch`, no SDK. |
-| Web fetch | **Firecrawl** or native **`fetch`** | `web_fetch` when `tools.web.fetch` is set (`firecrawl` \| `fetchapi`). Firecrawl scrape needs `FIRECRAWL_API_KEY`; `fetchapi` uses Node `fetch` with rough HTML→text (no key). |
-| Logging | **Pino** | Structured info/debug/error logging. Process-wide `configureLogging` / `getLogger` in `@towa/core` (multistream → stdout + size-capped rotating file). Never construct bare `pino()` outside that module; never thread `logger` through deps. `towa logs` streams the file via the control plane. |
-| Config / secrets | YAML config file + secret env vars | Daemon boots with `towa run --config-file PATH`. Non-secret settings (chat id, model ids, paths, debounce, tool enable flags, …) live in YAML validated with Zod. Secrets only via env: `TELEGRAM_BOT_TOKEN`, provider API keys (`OPENAI_API_KEY`, `SERPAPI_API_KEY`, `FIRECRAWL_API_KEY`, …), optional webhook/`control` tokens. Optional `dotenv` still loads those secrets for local dev. |
-| Control plane | Node built-in `node:http` | Tiny localhost server on the daemon: `POST /command` (`ping` / `status` / `stop`) and `GET /logs` (tail the pino log file). Not an application HTTP framework — no Express/Hono/Fastify. |
-| CLI | Hand-rolled argv on the `towa` bin | `towa run` starts the foreground daemon; `towa stop` / `status` / `ping` / `logs` are thin HTTP clients against a fixed localhost control port (`127.0.0.1:18741` by default; override via YAML `control.port`, `TOWA_CONTROL_PORT`, or CLI `--port`). No runtime-state file — unreachable control HTTP means the daemon is not running. No CLI framework. |
-| Context packing | Fixed top-K + usage-relative headroom from answer `generate()` usage | No pre-call tokenizer; no context-window registry; see §5.2, §6, §8.3. |
-| Testing | Evals only — promptfoo + Langfuse (§9) | See §9.3. |
+| Concern                      | Library                                                              | Notes                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| ---------------------------- | -------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| SQL query building           | **Kysely**                                                           | Type-safe query builder over `better-sqlite3` (§3). Chosen over a full ORM (Prisma, Drizzle relational mode) specifically because the design requires two things ORMs tend to fight or can't express: recursive CTEs for graph traversal (§5.2) and `sqlite-vec`'s custom virtual-table functions (`vec_distance_cosine`, etc.). Kysely's raw-fragment escape hatch handles both while keeping everything else type-safe. |
+| Telegram integration         | **Telegraf**                                                         | Powers `createTelegram` (§7.2). Defaults to long-polling (`bot.launch()`) — zero infrastructure for a single-user daemon. Webhook mode is available via Telegraf's own bundled `webhookCallback`, so no separate HTTP framework is needed even then.                                                                                                                                                                      |
+| Structured-output validation | **Zod**                                                              | Validates every forced-pipeline structured output (query-gen, memory sufficiency assess, entity-resolution verification — §5.1, §4.3) after the JSON-parse fallback (§8.1). A malformed response from a less-capable local model fails loudly instead of silently corrupting state. Also defines tool parameter schemas for native function calling (§5.4).                                                               |
+| Web search                   | **SerpAPI** or **Firecrawl** (HTTP)                                  | `web_search` when `tools.web.search` is set (`serpapi` \| `firecrawl`); keys via `SERPAPI_API_KEY` / `FIRECRAWL_API_KEY`. Hand-rolled `fetch`, no SDK.                                                                                                                                                                                                                                                                    |
+| Web fetch                    | **Firecrawl** or native **`fetch`**                                  | `web_fetch` when `tools.web.fetch` is set (`firecrawl` \| `fetchapi`). Firecrawl scrape needs `FIRECRAWL_API_KEY`; `fetchapi` uses Node `fetch` with rough HTML→text (no key).                                                                                                                                                                                                                                            |
+| Logging                      | **Pino**                                                             | Structured info/debug/error logging. Process-wide `configureLogging` / `getLogger` in `@towa/core` (multistream → stdout + size-capped rotating file). Never construct bare `pino()` outside that module; never thread `logger` through deps. `towa logs` streams the file via the control plane.                                                                                                                         |
+| Config / secrets             | YAML config file + secret env vars                                   | Daemon boots with `towa run --config-file PATH`. Non-secret settings (chat id, model ids, paths, debounce, tool enable flags, …) live in YAML validated with Zod. Secrets only via env: `TELEGRAM_BOT_TOKEN`, provider API keys (`OPENAI_API_KEY`, `SERPAPI_API_KEY`, `FIRECRAWL_API_KEY`, …), optional webhook/`control` tokens. Optional `dotenv` still loads those secrets for local dev.                              |
+| Control plane                | Node built-in `node:http`                                            | Tiny localhost server on the daemon: `POST /command` (`ping` / `status` / `stop`) and `GET /logs` (tail the pino log file). Not an application HTTP framework — no Express/Hono/Fastify.                                                                                                                                                                                                                                  |
+| CLI                          | Hand-rolled argv on the `towa` bin                                   | `towa run` starts the foreground daemon; `towa stop` / `status` / `ping` / `logs` are thin HTTP clients against a fixed localhost control port (`127.0.0.1:18741` by default; override via YAML `control.port`, `TOWA_CONTROL_PORT`, or CLI `--port`). No runtime-state file — unreachable control HTTP means the daemon is not running. No CLI framework.                                                                |
+| Context packing              | Fixed top-K + usage-relative headroom from answer `generate()` usage | No pre-call tokenizer; no context-window registry; see §5.2, §6, §8.3.                                                                                                                                                                                                                                                                                                                                                    |
+| Testing                      | Evals only — promptfoo + Langfuse (§9)                               | See §9.3.                                                                                                                                                                                                                                                                                                                                                                                                                 |
 
-**Deliberately not introduced:** an HTTP *framework* (Telegraf covers Telegram webhook mode natively — §7.2; the daemon control plane uses raw `node:http` only), a CLI framework (hand-rolled argv is enough), a migration framework (§10 — hand-rolled scripts are sufficient at this scale), an embedding cache (§11 — tried and backed out), a message broker (§11 — a table + drain loop covers the write-path queue), a dedicated audio-transcription library (§7.3 — routed through multimodal chat models via `capabilities.audioInput` instead), a full ORM (§13 above — Kysely was chosen specifically to avoid this).
+**Deliberately not introduced:** an HTTP _framework_ (Telegraf covers Telegram webhook mode natively — §7.2; the daemon control plane uses raw `node:http` only), a CLI framework (hand-rolled argv is enough), a migration framework (§10 — hand-rolled scripts are sufficient at this scale), an embedding cache (§11 — tried and backed out), a message broker (§11 — a table + drain loop covers the write-path queue), a dedicated audio-transcription library (§7.3 — routed through multimodal chat models via `capabilities.audioInput` instead), a full ORM (§13 above — Kysely was chosen specifically to avoid this).

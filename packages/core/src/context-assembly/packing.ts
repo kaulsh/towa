@@ -31,9 +31,7 @@ const DEFAULT_HEADROOM_TIGHTEN_FACTOR = 0.5;
 const DEFAULT_MIN_WORKING_TOP_K = 4;
 const DEFAULT_MIN_RETRIEVED_TOP_K = 1;
 
-function defaults(
-  extras: Partial<ResolvedPackingLimits> = {},
-): ResolvedPackingLimits {
+function defaults(extras: Partial<ResolvedPackingLimits> = {}): ResolvedPackingLimits {
   return {
     workingTopK: DEFAULT_WORKING_TOP_K,
     retrievedTopK: DEFAULT_RETRIEVED_TOP_K,
@@ -42,9 +40,7 @@ function defaults(
   };
 }
 
-function tightenedLimits(
-  extras: Partial<ResolvedPackingLimits> = {},
-): ResolvedPackingLimits {
+function tightenedLimits(extras: Partial<ResolvedPackingLimits> = {}): ResolvedPackingLimits {
   return {
     workingTopK: Math.max(
       DEFAULT_MIN_WORKING_TOP_K,
@@ -75,8 +71,7 @@ export function resolvePackingLimits(
     return defaults();
   }
 
-  const { lastPromptTokens, previousPromptTokens, tightened: wasTightened } =
-    state;
+  const { lastPromptTokens, previousPromptTokens, tightened: wasTightened } = state;
 
   if (previousPromptTokens === undefined || previousPromptTokens <= 0) {
     return defaults({

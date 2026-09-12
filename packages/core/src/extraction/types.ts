@@ -37,16 +37,12 @@ export const EpisodeExtractionSchema = z.object({
   entities: z
     .array(ExtractedEntitySchema)
     .default([])
-    .describe(
-      "Entities for durable personal facts only; empty array when none",
-    ),
+    .describe("Entities for durable personal facts only; empty array when none"),
   /** Durable personal edges only; empty when nothing personal/durable (§2.3, §4). */
   edges: z
     .array(ExtractedEdgeSchema)
     .default([])
-    .describe(
-      "Edges for durable personal facts only; empty array when none",
-    ),
+    .describe("Edges for durable personal facts only; empty array when none"),
 });
 
 export type ExtractedEntity = z.infer<typeof ExtractedEntitySchema>;

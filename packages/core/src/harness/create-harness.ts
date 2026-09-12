@@ -1,31 +1,19 @@
 import type { Kysely } from "kysely";
 
-import type {
-  InboundMessage,
-  OutboundMessage,
-  TurnResult,
-} from "../messages.js";
+import type { LoadedChatModel, LoadedEmbeddingModel, ToolDefinition } from "../ai/types.js";
 import type { Database } from "../db/types.js";
-import type {
-  LoadedChatModel,
-  LoadedEmbeddingModel,
-  ToolDefinition,
-} from "../ai/types.js";
+import type { InboundMessage, OutboundMessage, TurnResult } from "../messages.js";
+import type { ToolExecutor } from "../tools/types.js";
+
+import { captionAndPersistInboundMedia } from "../ai/media/index.js";
 import {
   loadRecentWorkingTurns,
   nextPackingHeadroomState,
   type PackingHeadroomState,
 } from "../context-assembly/index.js";
-import { captionAndPersistInboundMedia } from "../ai/media/index.js";
 import { getLogger } from "../logging.js";
-import { runPipeline, type RunPipelineResult } from "./pipeline.js";
 import { buildTurnMediaRefs } from "../tools/index.js";
-import type { ToolExecutor } from "../tools/types.js";
-
-import {
-  createBurstDebouncer,
-  type BurstDebouncerOptions,
-} from "./debounce.js";
+import { createBurstDebouncer, type BurstDebouncerOptions } from "./debounce.js";
 import {
   cancelInitInterview,
   continueInitInterview,
@@ -33,6 +21,7 @@ import {
   saveInitInterviewState,
   startOrResumeInitInterview,
 } from "./init-interview.js";
+import { runPipeline, type RunPipelineResult } from "./pipeline.js";
 import { buildUserTurnContent } from "./user-turn-content.js";
 
 /** Idle after last message before firing — long enough for a second thought. */
@@ -81,10 +70,7 @@ interface PendingTurn {
   messages: InboundMessage[];
 }
 
-type ParsedSlashCommand =
-  | { kind: "start" }
-  | { kind: "init" }
-  | { kind: "init_cancel" };
+type ParsedSlashCommand = { kind: "start" } | { kind: "init" } | { kind: "init_cancel" };
 
 const START_HELP = [
   "Talk to me like a normal conversation — I remember durable personal details over time.",
@@ -191,10 +177,7 @@ export function createHarness(deps: CreateHarnessDeps): Harness {
     const last = pending[pending.length - 1];
     if (last && last.chatId === chatId) {
       last.messages.push(...batched);
-      log.info(
-        { chatId, burstSize: last.messages.length },
-        "merged burst into pending turn",
-      );
+      log.info({ chatId, burstSize: last.messages.length }, "merged burst into pending turn");
       return;
     }
 
@@ -205,24 +188,15 @@ export function createHarness(deps: CreateHarnessDeps): Harness {
    * Take late arrivals (if any) and return an extended message list.
    * Caller regenerates when the list grows.
    */
-  function takeLateArrivals(
-    chatId: string,
-    messages: InboundMessage[],
-  ): InboundMessage[] {
+  function takeLateArrivals(chatId: string, messages: InboundMessage[]): InboundMessage[] {
     const late = lateByChat.get(chatId);
     if (!late?.length) return messages;
     lateByChat.delete(chatId);
-    log.info(
-      { chatId, lateCount: late.length },
-      "folding late arrivals into turn — regenerating",
-    );
+    log.info({ chatId, lateCount: late.length }, "folding late arrivals into turn — regenerating");
     return [...messages, ...late];
   }
 
-  async function deliver(
-    chatId: string,
-    outbound: OutboundMessage[],
-  ): Promise<void> {
+  async function deliver(chatId: string, outbound: OutboundMessage[]): Promise<void> {
     if (turnCompletedHandler) {
       await turnCompletedHandler({ chatId, outbound });
     }
@@ -314,15 +288,8 @@ export function createHarness(deps: CreateHarnessDeps): Harness {
     let mediaArtifacts: ReadonlyMap<string, string> | undefined;
 
     if (hasInboundMedia) {
-      log.info(
-        { chatId, burstSize: turnMessages.length },
-        "sync media caption before reply",
-      );
-      const captioned = await captionAndPersistInboundMedia(
-        db,
-        turnMessages,
-        chatModel,
-      );
+      log.info({ chatId, burstSize: turnMessages.length }, "sync media caption before reply");
+      const captioned = await captionAndPersistInboundMedia(db, turnMessages, chatModel);
       mediaArtifacts = captioned.artifactsByMessageId;
       log.info(
         {
@@ -346,11 +313,7 @@ export function createHarness(deps: CreateHarnessDeps): Harness {
 
     do {
       const recentTurns = await loadRecentWorkingTurns(db);
-      const turn = buildUserTurnContent(
-        turnMessages,
-        chatModel,
-        mediaArtifacts,
-      );
+      const turn = buildUserTurnContent(turnMessages, chatModel, mediaArtifacts);
 
       result = await runPipeline({
         db,
@@ -382,11 +345,7 @@ export function createHarness(deps: CreateHarnessDeps): Harness {
 
       // Late arrivals may include new media — re-caption before regenerating.
       if (next.some((m) => Boolean(m.media))) {
-        const captioned = await captionAndPersistInboundMedia(
-          db,
-          turnMessages,
-          chatModel,
-        );
+        const captioned = await captionAndPersistInboundMedia(db, turnMessages, chatModel);
         mediaArtifacts = captioned.artifactsByMessageId;
       }
     } while (true);

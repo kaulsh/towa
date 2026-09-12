@@ -13,10 +13,7 @@
 import { Marked } from "marked";
 
 function escapeHtml(text: string): string {
-  return text
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;");
+  return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
 const telegramMarked = new Marked();
@@ -77,9 +74,7 @@ telegramMarked.use({
     },
 
     table(token) {
-      const header = token.header
-        .map((cell) => this.parser.parseInline(cell.tokens))
-        .join(" | ");
+      const header = token.header.map((cell) => this.parser.parseInline(cell.tokens)).join(" | ");
       const rows = token.rows.map((row) =>
         row.map((cell) => this.parser.parseInline(cell.tokens)).join(" | "),
       );

@@ -1,8 +1,10 @@
 import type { Kysely } from "kysely";
+
 import { sql } from "kysely";
 
-import { VALID_TO_OPEN_SENTINEL } from "../constants.js";
 import type { Database } from "../types.js";
+
+import { VALID_TO_OPEN_SENTINEL } from "../constants.js";
 
 /**
  * Initial schema: raw_log, episodes, kg_nodes/edges, episode_gists,

@@ -60,9 +60,7 @@ export function extractMediaRef(message: Message): MediaRef | undefined {
       fileId: message.document.file_id,
       mimeType,
       kind,
-      ...(message.document.file_name !== undefined
-        ? { fileName: message.document.file_name }
-        : {}),
+      ...(message.document.file_name !== undefined ? { fileName: message.document.file_name } : {}),
     };
   }
 
@@ -90,22 +88,12 @@ function formatChatName(chat: Chat): string {
   if ("title" in chat && typeof chat.title === "string" && chat.title) {
     return chat.title;
   }
-  if (
-    "username" in chat &&
-    typeof chat.username === "string" &&
-    chat.username
-  ) {
+  if ("username" in chat && typeof chat.username === "string" && chat.username) {
     return `@${chat.username}`;
   }
-  if (
-    "first_name" in chat &&
-    typeof chat.first_name === "string" &&
-    chat.first_name
-  ) {
+  if ("first_name" in chat && typeof chat.first_name === "string" && chat.first_name) {
     const last =
-      "last_name" in chat && typeof chat.last_name === "string"
-        ? chat.last_name
-        : undefined;
+      "last_name" in chat && typeof chat.last_name === "string" ? chat.last_name : undefined;
     return [chat.first_name, last].filter(Boolean).join(" ");
   }
   return "unknown";
@@ -147,10 +135,7 @@ function extractForwardFrom(message: Message): string | undefined {
   if (legacy.forward_from) {
     return formatPersonName(legacy.forward_from);
   }
-  if (
-    typeof legacy.forward_sender_name === "string" &&
-    legacy.forward_sender_name.length > 0
-  ) {
+  if (typeof legacy.forward_sender_name === "string" && legacy.forward_sender_name.length > 0) {
     return legacy.forward_sender_name;
   }
   if (legacy.forward_from_chat) {
@@ -175,11 +160,7 @@ function parentQuoteText(parent: Message): string | undefined {
   if ("text" in parent && typeof parent.text === "string" && parent.text) {
     return parent.text;
   }
-  if (
-    "caption" in parent &&
-    typeof parent.caption === "string" &&
-    parent.caption
-  ) {
+  if ("caption" in parent && typeof parent.caption === "string" && parent.caption) {
     return parent.caption;
   }
   return undefined;
@@ -252,10 +233,7 @@ export function isUnsupportedMessage(message: Message): boolean {
   if ("video" in message && message.video) return true;
   if ("video_note" in message && message.video_note) return true;
   if ("audio" in message && message.audio) return true;
-  if (
-    "document" in message &&
-    message.document?.mime_type?.startsWith("audio/")
-  ) {
+  if ("document" in message && message.document?.mime_type?.startsWith("audio/")) {
     return true;
   }
   if ("sticker" in message && message.sticker) return true;

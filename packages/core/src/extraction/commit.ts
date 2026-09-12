@@ -1,10 +1,11 @@
 import type { Kysely } from "kysely";
 
 import type { Database } from "../db/types.js";
+import type { PreparedEdgeWrite, PreparedNodeWrite } from "./types.js";
+
 import { embeddingToBlob } from "../db/embeddings.js";
 import { indexGistForFts } from "../retrieval/fts-index.js";
 import { markExtractionDone } from "./queue.js";
-import type { PreparedEdgeWrite, PreparedNodeWrite } from "./types.js";
 
 export interface ExtractionCommitInput {
   episodeId: number;
@@ -24,9 +25,7 @@ export async function commitExtraction(
 ): Promise<void> {
   // Persist episode gist + embedding (§2.4) — unconditional at the call-site.
   const embeddingBlob =
-    input.gistEmbedding.length > 0
-      ? embeddingToBlob(input.gistEmbedding)
-      : null;
+    input.gistEmbedding.length > 0 ? embeddingToBlob(input.gistEmbedding) : null;
 
   await db.transaction().execute(async (trx) => {
     for (const node of input.newNodes) {
@@ -38,8 +37,7 @@ export async function commitExtraction(
           canonical_name: node.canonicalName,
           aliases: JSON.stringify(node.aliases),
           attributes: JSON.stringify(node.attributes),
-          embedding:
-            node.embedding.length > 0 ? embeddingToBlob(node.embedding) : null,
+          embedding: node.embedding.length > 0 ? embeddingToBlob(node.embedding) : null,
           provenance: JSON.stringify(node.provenance),
         })
         .execute();

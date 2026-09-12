@@ -1,7 +1,7 @@
 import type { ToolDefinition } from "../ai/types.js";
+import type { ToolExecutor, TurnMediaRef } from "./types.js";
 
 import { createFsTools, type FsToolOptions } from "./fs.js";
-import type { ToolExecutor, TurnMediaRef } from "./types.js";
 import {
   createWebFetchTool,
   createWebSearchTool,
@@ -11,9 +11,7 @@ import {
 
 export interface BuildEnabledToolsInput {
   webSearch?: { provider: WebSearchProvider; apiKey: string };
-  webFetch?:
-    | { provider: "firecrawl"; apiKey: string }
-    | { provider: "fetchapi" };
+  webFetch?: { provider: "firecrawl"; apiKey: string } | { provider: "fetchapi" };
   fs?: FsToolOptions;
 }
 

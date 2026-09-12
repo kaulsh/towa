@@ -1,10 +1,7 @@
 import { toFile } from "openai";
 
 import { getLogger } from "../../logging.js";
-import {
-  isTelegramVoiceOgg,
-  telegramVoiceToWav16kMono,
-} from "./voice-to-wav.js";
+import { isTelegramVoiceOgg, telegramVoiceToWav16kMono } from "./voice-to-wav.js";
 
 function filenameForMime(mimeType: string): string {
   if (mimeType.includes("ogg") || mimeType.includes("opus")) return "voice.ogg";
@@ -105,17 +102,13 @@ export async function transcribeOpenAICompatible(input: {
   }
 
   if (!response.ok) {
-    throw new Error(
-      `transcriptions HTTP ${response.status}: ${bodyText.slice(0, 500)}`,
-    );
+    throw new Error(`transcriptions HTTP ${response.status}: ${bodyText.slice(0, 500)}`);
   }
 
   const text = extractTranscriptionText(raw);
   if (!text) {
     log.warn({ raw }, "transcriptions returned empty text");
-    throw new Error(
-      "transcriptions returned empty text (check model audio support / think mode)",
-    );
+    throw new Error("transcriptions returned empty text (check model audio support / think mode)");
   }
   return text;
 }

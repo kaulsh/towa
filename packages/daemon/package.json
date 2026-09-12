@@ -2,7 +2,6 @@
   "name": "@towa/daemon",
   "version": "0.1.0",
   "private": true,
-  "type": "module",
   "description": "Towa Telegram daemon + towa CLI (run/stop/status/ping/logs).",
   "bin": {
     "towa": "./dist/cli.js"
@@ -12,6 +11,7 @@
     "towa.example.yaml",
     ".env.example"
   ],
+  "type": "module",
   "scripts": {
     "build": "tsc",
     "build:w": "tsc -w --incremental",

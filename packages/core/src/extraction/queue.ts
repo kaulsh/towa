@@ -86,10 +86,7 @@ export async function markExtractionInProgress(
     .execute();
 }
 
-export async function markExtractionDone(
-  db: Kysely<Database>,
-  episodeId: number,
-): Promise<void> {
+export async function markExtractionDone(db: Kysely<Database>, episodeId: number): Promise<void> {
   const updatedAt = Math.floor(Date.now() / 1000);
   await db
     .updateTable("pending_extraction")

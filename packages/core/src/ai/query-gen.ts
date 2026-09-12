@@ -1,9 +1,9 @@
 import { z } from "zod";
 
 import type { WorkingContextTurn } from "../context-assembly/types.js";
+import type { ChatMessage, LoadedChatModel } from "./types.js";
 
 import { generateStructured } from "./structured.js";
-import type { ChatMessage, LoadedChatModel } from "./types.js";
 
 /**
  * Explicit historical request for temporal retrieval (§5.3).
@@ -83,27 +83,19 @@ Return JSON with keys: search_queries (string[]), entity_names (string[]), inclu
 
   const messages: ChatMessage[] = [
     { role: "system", content: system },
-    ...recentContext.map(
-      (t): ChatMessage => ({
-        role: t.role,
-        content: t.content,
-      }),
-    ),
+    ...recentContext.map((t): ChatMessage => ({
+      role: t.role,
+      content: t.content,
+    })),
     { role: "user", content: user },
   ];
 
-  const { value: raw } = await generateStructured(
-    chatModel,
-    messages,
-    QueryGenSchema,
-  );
+  const { value: raw } = await generateStructured(chatModel, messages, QueryGenSchema);
 
-  const historyRequests: HistoryRequest[] = (raw.history_requests ?? []).map(
-    (h) => ({
-      entity: h.entity,
-      ...(h.relation != null ? { relation: h.relation } : {}),
-    }),
-  );
+  const historyRequests: HistoryRequest[] = (raw.history_requests ?? []).map((h) => ({
+    entity: h.entity,
+    ...(h.relation != null ? { relation: h.relation } : {}),
+  }));
 
   const searchQueries = [
     ...raw.search_queries,

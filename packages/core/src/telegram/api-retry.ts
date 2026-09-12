@@ -42,9 +42,7 @@ function retryDelayMs(
 function telegramRetryAfterSeconds(err: unknown): number | undefined {
   if (!err || typeof err !== "object") return undefined;
   const params = (err as { parameters?: { retry_after?: unknown } }).parameters;
-  return typeof params?.retry_after === "number"
-    ? params.retry_after
-    : undefined;
+  return typeof params?.retry_after === "number" ? params.retry_after : undefined;
 }
 
 /**
@@ -78,9 +76,7 @@ export function isTransientTelegramApiError(err: unknown): boolean {
     return true;
   }
   const msg = e.message ?? "";
-  return /ECONNRESET|ECONNREFUSED|ETIMEDOUT|ENOTFOUND|EAI_AGAIN|socket hang up/i.test(
-    msg,
-  );
+  return /ECONNRESET|ECONNREFUSED|ETIMEDOUT|ENOTFOUND|EAI_AGAIN|socket hang up/i.test(msg);
 }
 
 const log = getLogger("telegram-api");
@@ -104,15 +100,11 @@ export async function withTransientRetry<T>(
       return await fn();
     } catch (err) {
       const allow =
-        isTransientTelegramApiError(err) &&
-        (options.shouldRetry?.(err, attempt) ?? true);
+        isTransientTelegramApiError(err) && (options.shouldRetry?.(err, attempt) ?? true);
       if (!allow) throw err;
 
       const retryInMs = retryDelayMs(attempt, baseDelayMs, maxDelayMs, err);
-      log.warn(
-        { err, label, attempt, retryInMs },
-        "transient failure; retrying",
-      );
+      log.warn({ err, label, attempt, retryInMs }, "transient failure; retrying");
       await sleep(retryInMs);
     }
   }

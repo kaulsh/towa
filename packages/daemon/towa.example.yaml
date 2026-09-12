@@ -62,7 +62,7 @@ control:
 tools:
   web:
     # search: serpapi   # or firecrawl
-    fetch: fetchapi   # or firecrawl
+    fetch: fetchapi # or firecrawl
   fs:
     enabled: false
     # sandbox_root: null  # default: <dirname(db.path)>/sandbox

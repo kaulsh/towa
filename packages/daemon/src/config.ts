@@ -1,7 +1,3 @@
-import { readFileSync } from "node:fs";
-import { dirname, isAbsolute, join, resolve } from "node:path";
-import { parse as parseYaml } from "yaml";
-import { z } from "zod";
 import {
   buildEnabledTools,
   loadLocalEmbeddings,
@@ -16,6 +12,10 @@ import {
   type WebFetchProvider,
   type WebSearchProvider,
 } from "@towa/core";
+import { readFileSync } from "node:fs";
+import { dirname, isAbsolute, join, resolve } from "node:path";
+import { parse as parseYaml } from "yaml";
+import { z } from "zod";
 
 import { resolveControlPort } from "./control.js";
 
@@ -207,9 +207,7 @@ export function loadConfigFromFile(
 
   const parsed = YamlConfigSchema.safeParse(raw ?? {});
   if (!parsed.success) {
-    throw new Error(
-      `Invalid config file ${absoluteConfigPath}:\n${parsed.error.toString()}`,
-    );
+    throw new Error(`Invalid config file ${absoluteConfigPath}:\n${parsed.error.toString()}`);
   }
   const yaml = parsed.data;
 
@@ -221,26 +219,21 @@ export function loadConfigFromFile(
 
   const embeddingProvider = yaml.models.embedding.provider;
   const chatBaseUrl = yaml.models.chat.base_url.trim();
-  const embeddingBaseUrl =
-    yaml.models.embedding.openai?.base_url?.trim() || undefined;
+  const embeddingBaseUrl = yaml.models.embedding.openai?.base_url?.trim() || undefined;
 
   if (embeddingProvider === "openai-compatible" && !embeddingBaseUrl) {
     throw new Error(
       "models.embedding.openai.base_url is required when models.embedding.provider is openai-compatible",
     );
   }
-  if (
-    embeddingProvider === "openai-compatible" &&
-    yaml.models.embedding.dimensions === undefined
-  ) {
+  if (embeddingProvider === "openai-compatible" && yaml.models.embedding.dimensions === undefined) {
     throw new Error(
       "models.embedding.dimensions is required when models.embedding.provider is openai-compatible",
     );
   }
 
   const openaiApiKey = env.OPENAI_API_KEY?.trim() || undefined;
-  const controlToken =
-    yaml.control.token?.trim() || env.TOWA_CONTROL_TOKEN?.trim() || undefined;
+  const controlToken = yaml.control.token?.trim() || env.TOWA_CONTROL_TOKEN?.trim() || undefined;
 
   const webSearchProvider = yaml.tools.web.search;
   const webFetchProvider = yaml.tools.web.fetch;
@@ -249,28 +242,18 @@ export function loadConfigFromFile(
   const firecrawlApiKey = env.FIRECRAWL_API_KEY?.trim() || undefined;
 
   if (webSearchProvider === "serpapi" && !serpApiKey) {
-    throw new Error(
-      'tools.web.search is "serpapi" but SERPAPI_API_KEY is not set',
-    );
+    throw new Error('tools.web.search is "serpapi" but SERPAPI_API_KEY is not set');
   }
-  if (
-    (webSearchProvider === "firecrawl" || webFetchProvider === "firecrawl") &&
-    !firecrawlApiKey
-  ) {
-    throw new Error(
-      "tools.web uses firecrawl but FIRECRAWL_API_KEY is not set",
-    );
+  if ((webSearchProvider === "firecrawl" || webFetchProvider === "firecrawl") && !firecrawlApiKey) {
+    throw new Error("tools.web uses firecrawl but FIRECRAWL_API_KEY is not set");
   }
 
   const fsSandboxRoot =
-    yaml.tools.fs.sandbox_root != null &&
-    yaml.tools.fs.sandbox_root.trim().length > 0
+    yaml.tools.fs.sandbox_root != null && yaml.tools.fs.sandbox_root.trim().length > 0
       ? resolvePath(configDir, yaml.tools.fs.sandbox_root.trim())
       : join(dirname(dbPath), "sandbox");
 
-  const fsAllowlist = yaml.tools.fs.allowlist.map((p) =>
-    resolvePath(configDir, p),
-  );
+  const fsAllowlist = yaml.tools.fs.allowlist.map((p) => resolvePath(configDir, p));
 
   let telegramWebhook: TelegramWebhookConfig | undefined;
   if (yaml.telegram.webhook) {

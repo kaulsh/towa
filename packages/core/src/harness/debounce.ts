@@ -11,17 +11,11 @@ export interface BurstDebouncerOptions {
 }
 
 export interface BurstDebouncer {
-  schedule<T>(
-    key: string,
-    item: T,
-    onFire: (items: T[]) => void,
-  ): void;
+  schedule<T>(key: string, item: T, onFire: (items: T[]) => void): void;
   clearAll(): void;
 }
 
-export function createBurstDebouncer(
-  options: BurstDebouncerOptions,
-): BurstDebouncer {
+export function createBurstDebouncer(options: BurstDebouncerOptions): BurstDebouncer {
   const { idleMs, maxWaitMs } = options;
 
   type Bucket<T> = {

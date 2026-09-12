@@ -1,9 +1,9 @@
 import { z } from "zod";
 
 import type { ToolDefinition } from "../ai/types.js";
-import { getLogger } from "../logging.js";
-
 import type { ToolExecuteResult, ToolTurnContext } from "./types.js";
+
+import { getLogger } from "../logging.js";
 
 const SEARCH_RESULT_CAP = 8;
 const FETCH_TEXT_MAX_CHARS = 40_000;
@@ -47,10 +47,7 @@ function htmlToRoughText(html: string): string {
     .trim();
 }
 
-async function searchSerpApi(
-  query: string,
-  apiKey: string,
-): Promise<ToolExecuteResult> {
+async function searchSerpApi(query: string, apiKey: string): Promise<ToolExecuteResult> {
   const url = new URL("https://serpapi.com/search.json");
   url.searchParams.set("q", query);
   url.searchParams.set("api_key", apiKey);
@@ -60,9 +57,7 @@ async function searchSerpApi(
   const res = await fetch(url);
   if (!res.ok) {
     const body = await res.text().catch(() => "");
-    return deny(
-      `SerpAPI HTTP ${res.status}: ${body.slice(0, 500) || res.statusText}`,
-    );
+    return deny(`SerpAPI HTTP ${res.status}: ${body.slice(0, 500) || res.statusText}`);
   }
   const data = (await res.json()) as {
     organic_results?: Array<{
@@ -75,20 +70,15 @@ async function searchSerpApi(
   if (data.error) {
     return deny(`SerpAPI error: ${data.error}`);
   }
-  const results = (data.organic_results ?? [])
-    .slice(0, SEARCH_RESULT_CAP)
-    .map((r) => ({
-      title: r.title ?? "",
-      link: r.link ?? "",
-      snippet: r.snippet ?? "",
-    }));
+  const results = (data.organic_results ?? []).slice(0, SEARCH_RESULT_CAP).map((r) => ({
+    title: r.title ?? "",
+    link: r.link ?? "",
+    snippet: r.snippet ?? "",
+  }));
   return { content: JSON.stringify({ provider: "serpapi", query, results }) };
 }
 
-async function searchFirecrawl(
-  query: string,
-  apiKey: string,
-): Promise<ToolExecuteResult> {
+async function searchFirecrawl(query: string, apiKey: string): Promise<ToolExecuteResult> {
   const res = await fetch("https://api.firecrawl.dev/v1/search", {
     method: "POST",
     headers: {
@@ -102,9 +92,7 @@ async function searchFirecrawl(
   });
   if (!res.ok) {
     const body = await res.text().catch(() => "");
-    return deny(
-      `Firecrawl search HTTP ${res.status}: ${body.slice(0, 500) || res.statusText}`,
-    );
+    return deny(`Firecrawl search HTTP ${res.status}: ${body.slice(0, 500) || res.statusText}`);
   }
   const data = (await res.json()) as {
     success?: boolean;
@@ -129,10 +117,7 @@ async function searchFirecrawl(
   };
 }
 
-async function fetchFirecrawl(
-  pageUrl: string,
-  apiKey: string,
-): Promise<ToolExecuteResult> {
+async function fetchFirecrawl(pageUrl: string, apiKey: string): Promise<ToolExecuteResult> {
   const res = await fetch("https://api.firecrawl.dev/v1/scrape", {
     method: "POST",
     headers: {
@@ -147,9 +132,7 @@ async function fetchFirecrawl(
   });
   if (!res.ok) {
     const body = await res.text().catch(() => "");
-    return deny(
-      `Firecrawl scrape HTTP ${res.status}: ${body.slice(0, 500) || res.statusText}`,
-    );
+    return deny(`Firecrawl scrape HTTP ${res.status}: ${body.slice(0, 500) || res.statusText}`);
   }
   const data = (await res.json()) as {
     success?: boolean;
@@ -195,9 +178,7 @@ async function fetchNative(pageUrl: string): Promise<ToolExecuteResult> {
   });
   if (!res.ok) {
     const body = await res.text().catch(() => "");
-    return deny(
-      `fetchapi HTTP ${res.status}: ${body.slice(0, 500) || res.statusText}`,
-    );
+    return deny(`fetchapi HTTP ${res.status}: ${body.slice(0, 500) || res.statusText}`);
   }
   const contentType = res.headers.get("content-type") ?? "";
   const raw = await res.text();
@@ -222,10 +203,7 @@ export interface WebSearchToolOptions {
 
 export function createWebSearchTool(options: WebSearchToolOptions): {
   definition: ToolDefinition;
-  execute: (
-    args: unknown,
-    ctx: ToolTurnContext,
-  ) => Promise<ToolExecuteResult>;
+  execute: (args: unknown, ctx: ToolTurnContext) => Promise<ToolExecuteResult>;
 } {
   const log = getLogger("tools.web_search");
   const { provider, apiKey } = options;
@@ -247,10 +225,7 @@ export function createWebSearchTool(options: WebSearchToolOptions): {
             ? await searchSerpApi(parsed.data.query, apiKey)
             : await searchFirecrawl(parsed.data.query, apiKey);
         if (!result.isError) {
-          log.info(
-            { provider, query: parsed.data.query },
-            "web_search ok",
-          );
+          log.info({ provider, query: parsed.data.query }, "web_search ok");
         }
         return result;
       } catch (err) {
@@ -268,10 +243,7 @@ export interface WebFetchToolOptions {
 
 export function createWebFetchTool(options: WebFetchToolOptions): {
   definition: ToolDefinition;
-  execute: (
-    args: unknown,
-    ctx: ToolTurnContext,
-  ) => Promise<ToolExecuteResult>;
+  execute: (args: unknown, ctx: ToolTurnContext) => Promise<ToolExecuteResult>;
 } {
   const log = getLogger("tools.web_fetch");
   const { provider, apiKey } = options;

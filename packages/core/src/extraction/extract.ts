@@ -1,11 +1,7 @@
 import type { ChatMessage, LoadedChatModel } from "../ai/types.js";
 
 import { generateStructured } from "../ai/structured.js";
-import {
-  EpisodeExtractionSchema,
-  type EpisodeExtraction,
-  type EpisodeTurn,
-} from "./types.js";
+import { EpisodeExtractionSchema, type EpisodeExtraction, type EpisodeTurn } from "./types.js";
 
 /**
  * Single LLM pass: within-episode coreference + proposed edges + gist (§4.2, §2.4).
@@ -42,18 +38,12 @@ export async function extractEpisodeKnowledge(
     },
   ];
 
-  const { value } = await generateStructured(
-    chatModel,
-    messages,
-    EpisodeExtractionSchema,
-  );
+  const { value } = await generateStructured(chatModel, messages, EpisodeExtractionSchema);
   return value;
 }
 
 function formatTranscript(turns: EpisodeTurn[]): string {
-  return turns
-    .map((t) => `[${t.role} msg=${t.rawLogId} t=${t.timestamp}] ${t.content}`)
-    .join("\n");
+  return turns.map((t) => `[${t.role} msg=${t.rawLogId} t=${t.timestamp}] ${t.content}`).join("\n");
 }
 
 const EXTRACTION_SYSTEM_PROMPT = `You extract a temporal knowledge graph and episode gist from a conversation episode.

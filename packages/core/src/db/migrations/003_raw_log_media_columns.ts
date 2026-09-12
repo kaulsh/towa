@@ -1,9 +1,11 @@
 import type { Kysely } from "kysely";
+
 import { sql } from "kysely";
 import { z } from "zod";
 
-import { isMediaKind, type MediaKind } from "../../messages.js";
 import type { Database } from "../types.js";
+
+import { isMediaKind, type MediaKind } from "../../messages.js";
 
 const MediaRefBackfillSchema = z.object({
   fileId: z.string().optional(),
@@ -53,9 +55,7 @@ interface BackfillMedia {
   kind: MediaKind;
 }
 
-function mediaFromRefObject(
-  ref: z.infer<typeof MediaRefBackfillSchema>,
-): BackfillMedia | null {
+function mediaFromRefObject(ref: z.infer<typeof MediaRefBackfillSchema>): BackfillMedia | null {
   const fileId = ref.fileId ?? ref.platformFileId ?? ref.platform_file_id;
   const mimeType = ref.mimeType ?? ref.mime_type;
   const kind = ref.kind;
@@ -164,10 +164,8 @@ export async function up(db: Kysely<Database>): Promise<void> {
       continue;
     }
 
-    const chatId =
-      meta.chat?.id !== undefined ? String(meta.chat.id) : null;
-    const messageId =
-      meta.message_id !== undefined ? String(meta.message_id) : null;
+    const chatId = meta.chat?.id !== undefined ? String(meta.chat.id) : null;
+    const messageId = meta.message_id !== undefined ? String(meta.message_id) : null;
     const isMediaArtifact = meta.kind === "media_artifact" ? 1 : 0;
 
     const fromRef =

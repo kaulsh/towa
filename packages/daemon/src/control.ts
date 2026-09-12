@@ -27,9 +27,7 @@ export function resolveControlPort(options: {
   if (raw) {
     const n = Number(raw);
     if (!Number.isFinite(n) || !Number.isInteger(n) || n <= 0) {
-      throw new Error(
-        `TOWA_CONTROL_PORT must be a positive integer (got ${JSON.stringify(raw)})`,
-      );
+      throw new Error(`TOWA_CONTROL_PORT must be a positive integer (got ${JSON.stringify(raw)})`);
     }
     return n;
   }

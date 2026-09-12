@@ -1,8 +1,4 @@
-export {
-  putMediaBytes,
-  getMediaBytes,
-  type CachedMediaBytes,
-} from "./byte-cache.js";
+export { putMediaBytes, getMediaBytes, type CachedMediaBytes } from "./byte-cache.js";
 export {
   contentHasMediaArtifact,
   enrichTurnsWithMedia,

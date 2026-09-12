@@ -1,5 +1,5 @@
-import type { InboundMessage } from "../messages.js";
 import type { LoadedChatModel, MessagePart } from "../ai/types.js";
+import type { InboundMessage } from "../messages.js";
 
 /** Text for query-gen / logs, plus multimodal parts for reply-path generate. */
 export interface UserTurnContent {
@@ -13,17 +13,12 @@ function contentTextWithReply(msg: InboundMessage): string {
   if (msg.replyTo) {
     // Rebuild reply prefix from typed field so generation does not depend on
     // parsing the durable content annotation.
-    const withoutAnnotation = base.replace(
-      /^\[reply to #\d+(?:: "[^"]*")?\]\s*/,
-      "",
-    );
+    const withoutAnnotation = base.replace(/^\[reply to #\d+(?:: "[^"]*")?\]\s*/, "");
     const replyPrefix =
       msg.replyTo.quote !== undefined
         ? `[reply to #${msg.replyTo.messageId}: "${msg.replyTo.quote}"]`
         : `[reply to #${msg.replyTo.messageId}]`;
-    base = withoutAnnotation
-      ? `${replyPrefix} ${withoutAnnotation}`
-      : replyPrefix;
+    base = withoutAnnotation ? `${replyPrefix} ${withoutAnnotation}` : replyPrefix;
   }
 
   return base;
@@ -36,10 +31,7 @@ function contentTextWithReply(msg: InboundMessage): string {
  * Voice notes are **not** attached here — sync caption transcribes them to
  * text (`[audio transcript]: …`) and that text is what reaches the model.
  */
-function mediaPartsForGeneration(
-  msg: InboundMessage,
-  chatModel: LoadedChatModel,
-): MessagePart[] {
+function mediaPartsForGeneration(msg: InboundMessage, chatModel: LoadedChatModel): MessagePart[] {
   const media = msg.media;
   if (!media?.data) return [];
 
@@ -66,9 +58,7 @@ function formatArtifactForGeneration(artifact: string): string {
   const imagePrefix = "[image description]:";
   if (artifact.startsWith(imagePrefix)) {
     const desc = artifact.slice(imagePrefix.length).trim();
-    return desc.length > 0
-      ? `(image — description) ${desc}`
-      : "(image — empty description)";
+    return desc.length > 0 ? `(image — description) ${desc}` : "(image — empty description)";
   }
   return artifact;
 }

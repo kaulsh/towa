@@ -5,14 +5,5 @@ export {
   type Database,
   type OpenDatabaseOptions,
 } from "./kysely.js";
-export type {
-  ExtractionStatus,
-  InitInterviewStatus,
-  RawLogRole,
-  SqliteBoolean,
-} from "./types.js";
-export {
-  embeddingToBlob,
-  blobToEmbedding,
-  cosineSimilarity,
-} from "./embeddings.js";
+export type { ExtractionStatus, InitInterviewStatus, RawLogRole, SqliteBoolean } from "./types.js";
+export { embeddingToBlob, blobToEmbedding, cosineSimilarity } from "./embeddings.js";

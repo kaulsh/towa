@@ -1,10 +1,6 @@
 import { type z, type ZodTypeAny } from "zod";
 
-import type {
-  ChatMessage,
-  GenerateUsage,
-  LoadedChatModel,
-} from "./types.js";
+import type { ChatMessage, GenerateUsage, LoadedChatModel } from "./types.js";
 
 export interface StructuredGenerateResult<T> {
   value: T;
@@ -73,10 +69,7 @@ export async function generateStructured<S extends ZodTypeAny>(
   }
 }
 
-function parseAndValidate<S extends ZodTypeAny>(
-  text: string,
-  schema: S,
-): z.output<S> {
+function parseAndValidate<S extends ZodTypeAny>(text: string, schema: S): z.output<S> {
   const json = extractJson(text);
   const parsed: unknown = JSON.parse(json);
   return schema.parse(parsed) as z.output<S>;
